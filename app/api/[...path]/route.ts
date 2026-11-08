@@ -1,3 +1,4 @@
+// app/api/[...path]/route.ts
 import {
   requirePrivacyReviewed,
   screenProfile,
@@ -36,14 +37,6 @@ import { logEvents } from "../../../lib/events.ts";
 import { aiPrivacyScreen } from "../../../lib/privacy-ai.ts";
 import { transcribeAudio } from "../../../lib/transcribe.ts";
 import type { CareEvent } from "../../../lib/events.ts";
-
-// What a section gained (for the visit log). Never logs names.
-function addedText(before: Profile | null, after: Profile, field: ProfileField) {
-  const old = before?.[field] || "";
-  const now = after[field];
-  if (!now) return null;
-  return old && now.startsWith(old) ? now.slice(old.length).trim() || null : now;
-}
 import {
   InputError,
   parseAnswers,
@@ -53,10 +46,15 @@ import {
   text,
 } from "../../../lib/validation.ts";
 
+function addedText(before: Profile | null, after: Profile, field: ProfileField) {
+  const old = before?.[field] || "";
+  const now = after[field];
+  if (!now) return null;
+  return old && now.startsWith(old) ? now.slice(old.length).trim() || null : now;
+}
+
 export const dynamic = "force-dynamic";
-const COOKIE = "kincard_demo";
-// Deliberately shared and forgeable demo marker. This is NOT production auth.
-const DEMO_MARKER = "fictional-family-demo";
+
 function json(
   data: unknown,
   status = 200,
@@ -67,14 +65,43 @@ function json(
     headers: { "Cache-Control": "no-store", ...headers },
   });
 }
-function signedIn(request: Request): boolean {
-  return (request.headers.get("cookie") || "")
-    .split(";")
-    .some((part) => part.trim() === `${COOKIE}=${DEMO_MARKER}`);
+
+function parseCookies(headers: Headers): Record<string, string> {
+  const cookieHeader = headers.get("cookie") || "";
+  return Object.fromEntries(
+    cookieHeader.split(";").map((c) => {
+      const [k, ...v] = c.trim().split("=");
+      return [k, decodeURIComponent(v.join("="))];
+    }),
+  );
 }
-function cookie(request: Request, logout = false): string {
-  return `${COOKIE}=${logout ? "" : DEMO_MARKER}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${logout ? 0 : 28800}${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
+
+async function getAuth0User(
+  request: Request,
+): Promise<{ sub: string; name?: string; email?: string; picture?: string } | null> {
+  const cookies = parseCookies(request.headers);
+  const sessionCookie = cookies["kincard_session"];
+
+  if (sessionCookie && sessionCookie.trim() !== "") {
+    try {
+      const raw = Buffer.from(sessionCookie, "base64").toString("utf8");
+      const user = JSON.parse(raw);
+      if (user && user.sub) {
+        return {
+          sub: user.sub,
+          name: user.name || user.nickname || user.given_name || user.email,
+          email: user.email,
+          picture: user.picture,
+        };
+      }
+    } catch (e) {
+      console.error("Failed to parse session cookie:", e);
+    }
+  }
+
+  return null;
 }
+
 async function body(
   request: Request,
   max = 150000,
@@ -84,8 +111,7 @@ async function body(
   if (Number(request.headers.get("content-length")) > max)
     throw new InputError("This request is too large.", 413);
   const raw = await request.text();
-  if (raw.length > max)
-    throw new InputError("This request is too large.", 413);
+  if (raw.length > max) throw new InputError("This request is too large.", 413);
   try {
     return record(JSON.parse(raw));
   } catch (error) {
@@ -93,6 +119,7 @@ async function body(
     throw new InputError("This request contains invalid JSON.");
   }
 }
+
 function interview(source: Record<string, unknown>) {
   if (typeof source.terms !== "boolean")
     throw new InputError(
@@ -114,6 +141,7 @@ function interview(source: Record<string, unknown>) {
     terms: source.terms,
   };
 }
+
 function narrativeInput(source: Record<string, unknown>, required = false) {
   if (typeof source.terms !== "boolean")
     throw new InputError(
@@ -133,6 +161,7 @@ function narrativeInput(source: Record<string, unknown>, required = false) {
     terms: source.terms,
   };
 }
+
 function assertToken(state: KinState, token: string) {
   if (state.qrToken !== token)
     throw new InputError(
@@ -142,28 +171,37 @@ function assertToken(state: KinState, token: string) {
   if (!state.profile)
     throw new InputError("The family has not approved a care card yet.", 404);
 }
+
 async function handle(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const route = url.pathname.replace(/^\/api\/?/, "").replace(/\/$/, "");
   const parts = route.split("/");
+  const envVars = bindings();
+
   if (request.method === "POST") {
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin)
       throw new InputError("Please use KinCard from its own browser tab.", 403);
   }
-  if (request.method === "POST" && route === "login") {
-    const input = await body(request);
-    if (input.username !== "family" || input.password !== "KinCard2026!")
-      throw new InputError("That demo username or password is incorrect.", 401);
-    return json({ ok: true, demoOnly: true }, 200, {
-      "Set-Cookie": cookie(request),
-    });
-  }
-  if (request.method === "POST" && route === "logout")
-    return json({ ok: true }, 200, { "Set-Cookie": cookie(request, true) });
 
+  // Auth0 Session Status Check
+  if (request.method === "GET" && route === "auth/me") {
+    const user = await getAuth0User(request);
+    return json({ user });
+  }
+
+  // State route: gracefully returns unauthenticated status if not logged in
+  if (request.method === "GET" && route === "state") {
+    const user = await getAuth0User(request);
+    if (!user) {
+      return json({ unauthenticated: true, profile: null, draft: null });
+    }
+    return json(await loadState(user.sub));
+  }
+
+  // Public Visitor QR Care View (Unauthenticated)
   if (parts[0] === "care") {
-    const state = await loadState();
+    const state = await loadState("demo");
     assertToken(state, parts[1] || "");
     if (request.method === "GET" && parts.length === 2)
       return json({
@@ -171,17 +209,20 @@ async function handle(request: Request): Promise<Response> {
         updatedAt: state.profileUpdatedAt || state.updatedAt,
         revision: state.revision,
       });
+
     if (
       request.method === "POST" &&
       parts.length === 3 &&
       parts[2] === "notes"
     ) {
       const input = await body(request);
-      // Pattern filter + Gemini (other residents', staff names, rooms, ...).
       const screened = await aiPrivacyScreen(
         text(input.text, "Visit note", 4000, true),
-        [state.profile?.preferredName || "", ...(state.profile?.fullName || "").split(/\s+/)],
-        { key: bindings().GEMINI_API_KEY, model: bindings().GEMINI_MODEL },
+        [
+          state.profile?.preferredName || "",
+          ...(state.profile?.fullName || "").split(/\s+/),
+        ],
+        { key: envVars.GEMINI_API_KEY, model: envVars.GEMINI_MODEL },
       );
       const note: VisitNote = {
         id: crypto.randomUUID(),
@@ -195,14 +236,11 @@ async function handle(request: Request): Promise<Response> {
         createdAt: new Date().toISOString(),
       };
       if (state.notes.length >= 300)
-        throw new InputError(
-          "The shared demo has reached its visit-note limit.",
-          409,
-        );
-      const config = bindings();
+        throw new InputError("The visit-note limit has been reached.", 409);
+
       const result = await generateSuggestion(note.text, {
-        key: config.GEMINI_API_KEY,
-        model: config.GEMINI_MODEL,
+        key: envVars.GEMINI_API_KEY,
+        model: envVars.GEMINI_MODEL,
       });
       const safeSuggestion = text(
         screenText(result.value).text,
@@ -223,6 +261,7 @@ async function handle(request: Request): Promise<Response> {
             baseValue: state.profile![result.field],
           }
         : null;
+
       await saveState(
         {
           ...state,
@@ -232,15 +271,21 @@ async function handle(request: Request): Promise<Response> {
             : state.suggestions,
         },
         state.revision,
+        "demo",
       );
-      await logEvents(bindings(), [
-        { type: "visitor_note", field: suggestion?.field ?? null, note: note.text },
+      await logEvents(envVars, [
+        {
+          type: "visitor_note",
+          field: suggestion?.field ?? null,
+          note: note.text,
+        },
       ]);
       return json(
         { note, suggestion, mode: result.mode, notice: result.notice },
         201,
       );
     }
+
     if (
       request.method === "POST" &&
       parts.length === 3 &&
@@ -249,23 +294,33 @@ async function handle(request: Request): Promise<Response> {
       const input = await body(request, 6_000_000);
       return json({
         text: await transcribeAudio(input.audio, {
-          key: bindings().GEMINI_API_KEY,
-          model: bindings().GEMINI_MODEL,
+          key: envVars.GEMINI_API_KEY,
+          model: envVars.GEMINI_MODEL,
         }),
       });
     }
     throw new InputError("This care-card action was not found.", 404);
   }
-  if (!signedIn(request))
-    throw new InputError("Please sign in with the demo family account.", 401);
+
+  // Require Auth0 session for remaining workspace routes
+  const user = await getAuth0User(request);
+  if (!user) {
+    throw new InputError(
+      "Please sign in with Auth0 to access your family space.",
+      401,
+    );
+  }
+  const userId = user.sub;
+
   if (request.method === "GET" && route === "ai/status")
     return json({
       ...getAiStatus({
-        key: bindings().GEMINI_API_KEY,
-        model: bindings().GEMINI_MODEL,
+        key: envVars.GEMINI_API_KEY,
+        model: envVars.GEMINI_MODEL,
       }),
       storage: storageMode(),
     });
+
   if (request.method === "POST" && route === "ai/check") {
     const input = await body(request);
     if (Object.keys(input).length)
@@ -274,53 +329,57 @@ async function handle(request: Request): Promise<Response> {
       );
     return json(
       await checkGeminiConnection({
-        key: bindings().GEMINI_API_KEY,
-        model: bindings().GEMINI_MODEL,
+        key: envVars.GEMINI_API_KEY,
+        model: envVars.GEMINI_MODEL,
       }),
     );
   }
+
   if (request.method === "POST" && route === "transcribe") {
     const input = await body(request, 6_000_000);
     return json({
       text: await transcribeAudio(input.audio, {
-        key: bindings().GEMINI_API_KEY,
-        model: bindings().GEMINI_MODEL,
+        key: envVars.GEMINI_API_KEY,
+        model: envVars.GEMINI_MODEL,
       }),
     });
   }
+
   if (request.method === "POST" && route === "privacy-review") {
     const input = await body(request);
-    const current = await loadState();
+    const current = await loadState(userId);
     const card = current.draft || current.profile;
     return json(
       await aiPrivacyScreen(
         text(input.text, "Story", 12000, true),
         [card?.preferredName || "", ...(card?.fullName || "").split(/\s+/)],
-        { key: bindings().GEMINI_API_KEY, model: bindings().GEMINI_MODEL },
+        { key: envVars.GEMINI_API_KEY, model: envVars.GEMINI_MODEL },
       ),
     );
   }
-  if (request.method === "GET" && route === "state")
-    return json(await loadState());
+
   if (request.method !== "POST")
     throw new InputError("This action was not found.", 404);
+
   const input = await body(request);
-  const state = await loadState();
+  const state = await loadState(userId);
   requireRevision(input, state.revision);
+
   if (route === "interview") {
     const submitted =
       "story" in input
         ? narrativeInput(input)
         : { ...interview(input), story: undefined };
     const next = { ...state, ...submitted, draft: null };
-    return json({ state: await saveState(next, state.revision) });
+    return json({ state: await saveState(next, state.revision, userId) });
   }
+
   if (route === "generate") {
-    // Build on the newest version: an unapproved draft if there is one, so
-    // several stories in a row all add up before the family approves.
     const base = state.draft || state.profile;
-    const config = bindings();
-    const aiConfig = { key: config.GEMINI_API_KEY, model: config.GEMINI_MODEL };
+    const aiConfig = {
+      key: envVars.GEMINI_API_KEY,
+      model: envVars.GEMINI_MODEL,
+    };
     const submitted =
       "story" in input
         ? narrativeInput(input, true)
@@ -328,15 +387,9 @@ async function handle(request: Request): Promise<Response> {
     const result =
       "answers" in submitted
         ? await generateProfile(submitted.answers, aiConfig)
-        : await generateNarrative(
-            submitted.story,
-            aiConfig,
-            cardMemory(base),
-          );
-    // Additive: new information is merged into the approved card in code.
+        : await generateNarrative(submitted.story, aiConfig, cardMemory(base));
+
     const merge = mergeProfile(base, screenProfile(result.profile));
-    // Smooth: Gemini blends new details into existing sections; code checks
-    // every earlier detail survived, else the plain added line is kept.
     const blend =
       base && !merge.startedNew
         ? await blendSections(base, merge.profile, merge.additions, aiConfig)
@@ -352,9 +405,11 @@ async function handle(request: Request): Promise<Response> {
     ]
       .filter(Boolean)
       .join(" ");
+
     const { uncertainties: _flags, ...extractedAnswers } = profile;
     const answers =
       "answers" in submitted ? submitted.answers : extractedAnswers;
+
     const next = await saveState(
       {
         ...state,
@@ -365,6 +420,7 @@ async function handle(request: Request): Promise<Response> {
         aiNotice: notice,
       },
       state.revision,
+      userId,
     );
     return json({
       profile,
@@ -375,6 +431,7 @@ async function handle(request: Request): Promise<Response> {
       state: next,
     });
   }
+
   if (route === "approve-profile") {
     const approved = approveProfile(
       state,
@@ -388,9 +445,9 @@ async function handle(request: Request): Promise<Response> {
         : `Family edited ${fields.length} section${fields.length === 1 ? "" : "s"}`,
       fields,
     });
-    const saved = await saveState(next, state.revision);
+    const saved = await saveState(next, state.revision, userId);
     await logEvents(
-      bindings(),
+      envVars,
       fields
         .filter((f) => f !== "fullName" && f !== "preferredName")
         .map(
@@ -403,13 +460,16 @@ async function handle(request: Request): Promise<Response> {
     );
     return json({ state: saved });
   }
+
   if (route === "qr")
     return json({
       state: await saveState(
         { ...state, qrToken: crypto.randomUUID() },
         state.revision,
+        userId,
       ),
     });
+
   if (parts[0] === "suggestions" && parts.length === 2) {
     if (input.decision !== "approved" && input.decision !== "rejected")
       throw new InputError("Choose approve or reject.");
@@ -419,12 +479,11 @@ async function handle(request: Request): Promise<Response> {
       const field = suggestion.field;
       const before = state.profile!;
       if (before[field] && next.profile[field] !== before[field]) {
-        const config = bindings();
         const blend = await blendSections(
           before,
           next.profile,
           { [field]: `Visitor observation: ${suggestion.value}` },
-          { key: config.GEMINI_API_KEY, model: config.GEMINI_MODEL },
+          { key: envVars.GEMINI_API_KEY, model: envVars.GEMINI_MODEL },
         );
         next = { ...next, profile: blend.profile };
       }
@@ -435,18 +494,24 @@ async function handle(request: Request): Promise<Response> {
         fields: changedFields(state.profile, next.profile!),
       });
     }
-    const saved = await saveState(next, state.revision);
+    const saved = await saveState(next, state.revision, userId);
     const decided = state.suggestions.find((s) => s.id === parts[1]);
     if (decided)
-      await logEvents(bindings(), [
+      await logEvents(envVars, [
         input.decision === "approved"
-          ? { type: "observation_approved", field: decided.field, note: decided.value }
+          ? {
+              type: "observation_approved",
+              field: decided.field,
+              note: decided.value,
+            }
           : { type: "observation_rejected", field: decided.field },
       ]);
     return json({ state: saved });
   }
+
   throw new InputError("This action was not found.", 404);
 }
+
 async function dispatch(request: Request) {
   try {
     return await handle(request);
@@ -456,11 +521,12 @@ async function dispatch(request: Request) {
         error:
           error instanceof InputError
             ? error.message
-            : "The demo could not complete this action. Please try again.",
+            : "The application could not complete this action. Please try again.",
       },
       error instanceof InputError ? error.status : 500,
     );
   }
 }
+
 export const GET = dispatch;
 export const POST = dispatch;

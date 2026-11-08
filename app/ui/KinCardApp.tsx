@@ -31,6 +31,7 @@ import {
   DemoNotice,
   formatDate,
   Logo,
+  type AuthUser,
 } from "./shared";
 import {
   Interview,
@@ -39,34 +40,44 @@ import {
   Suggestions,
   QRImage,
 } from "./flows";
+
 type View = "overview" | "profile" | "interview" | "journal" | "sharing";
+
 export default function KinCardApp() {
-  const [state, setState] = useState<KinState | null>(null),
-    [loading, setLoading] = useState(true),
-    [view, setView] = useState<View>("overview"),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [toast, setToast] = useState(""),
-    [help, setHelp] = useState(false),
-    [editProfile, setEditProfile] = useState<Profile | null>(null),
-    [editRevision, setEditRevision] = useState<number | null>(null);
+  const [state, setState] = useState<KinState | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<View>("overview");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const [help, setHelp] = useState(false);
+  const [editProfile, setEditProfile] = useState<Profile | null>(null);
+  const [editRevision, setEditRevision] = useState<number | null>(null);
+
   const refreshRequest = useRef(0);
   const refreshController = useRef<AbortController | null>(null);
+
   const refresh = useCallback(async () => {
     const request = ++refreshRequest.current;
     refreshController.current?.abort();
     const abort = new AbortController();
     refreshController.current = abort;
     try {
-      const data = await api("/api/state", undefined, abort.signal);
+      const [stateData, authData] = await Promise.all([
+        api("/api/state", undefined, abort.signal),
+        api("/api/auth/me", undefined, abort.signal).catch(() => ({ user: null })),
+      ]);
       if (refreshRequest.current === request && !abort.signal.aborted) {
-        setState(data);
+        setState(stateData);
+        setUser(authData.user);
         setError("");
       }
     } catch (e) {
       if (refreshRequest.current === request && !abort.signal.aborted) {
         if (e instanceof ApiError && e.status === 401) {
           setState(null);
+          setUser(null);
           setError("");
           setEditProfile(null);
           setEditRevision(null);
@@ -79,6 +90,7 @@ export default function KinCardApp() {
       }
     }
   }, []);
+
   useEffect(() => {
     refresh();
     return () => {
@@ -86,17 +98,20 @@ export default function KinCardApp() {
       refreshController.current?.abort();
     };
   }, [refresh]);
+
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(""), 4500);
     return () => clearTimeout(timer);
   }, [toast]);
+
   useEffect(() => {
     if (!state) return;
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [!!state, refresh]);
+
   async function act(task: () => Promise<void>) {
     setBusy(true);
     setError("");
@@ -108,6 +123,7 @@ export default function KinCardApp() {
       setBusy(false);
     }
   }
+
   function navigate(next: View) {
     setError("");
     setView(next);
@@ -117,6 +133,7 @@ export default function KinCardApp() {
     }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
   if (loading)
     return (
       <main className="loading-screen">
@@ -125,6 +142,7 @@ export default function KinCardApp() {
         <p>Making room for familiar moments…</p>
       </main>
     );
+
   if (!state && error)
     return (
       <main className="loading-screen">
@@ -136,10 +154,12 @@ export default function KinCardApp() {
         </button>
       </main>
     );
-  if (!state) return <Login onLogin={refresh} />;
-  const pending = state.suggestions.filter((x) => x.status === "pending"),
-    profile = state.profile,
-    name = profile?.preferredName || "your loved one";
+
+  if (!state || (state as any).unauthenticated) return <Login />;
+  const pending = (state.suggestions || []).filter((x) => x.status === "pending");
+  const profile = state.profile;
+  const name = profile?.preferredName || "your loved one";
+
   const nav = [
     { id: "overview", label: "Overview", Icon: Home },
     { id: "profile", label: "Care profile", Icon: Heart },
@@ -147,6 +167,7 @@ export default function KinCardApp() {
     { id: "journal", label: "Visit journal", Icon: NotebookPen },
     { id: "sharing", label: "QR sharing", Icon: QrCode },
   ] as const;
+
   async function decide(
     suggestion: Suggestion,
     decision: "approved" | "rejected",
@@ -164,6 +185,7 @@ export default function KinCardApp() {
       );
     });
   }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -199,26 +221,22 @@ export default function KinCardApp() {
             <HelpCircle size={19} /> Demo guide
           </button>
           <div className="family-user">
-            <span className="user-avatar">S</span>
+            {user?.picture ? (
+              <img src={user.picture} alt={user.name || "User"} className="w-8 h-8 rounded-full" />
+            ) : (
+              <span className="user-avatar">{user?.name ? user.name[0] : "F"}</span>
+            )}
             <div>
-              <strong>Sarah Morgan</strong>
-              <small>Demo family member</small>
+              <strong>{user?.name || "Family Member"}</strong>
+              <small>{user?.email || "Auth0 Account"}</small>
             </div>
-            <button
-              className="icon-button"
+            <a
+              className="icon-button flex items-center justify-center"
               aria-label="Sign out"
-              onClick={() =>
-                act(async () => {
-                  await api("/api/logout", {});
-                  setState(null);
-                  setView("overview");
-                  setEditProfile(null);
-                  setEditRevision(null);
-                })
-              }
+              href="/auth/logout"
             >
               <LogOut size={18} />
-            </button>
+            </a>
           </div>
         </div>
       </aside>
@@ -230,7 +248,7 @@ export default function KinCardApp() {
           </span>
           <span className="workspace-badge">
             <span />
-            Demo workspace
+            {user?.email ? "Auth0 Verified Account" : "Demo workspace"}
           </span>
           <button
             className="icon-button"
@@ -239,21 +257,13 @@ export default function KinCardApp() {
           >
             <RefreshCw size={17} />
           </button>
-          <button
-            className="mobile-signout icon-button"
+          <a
+            className="mobile-signout icon-button flex items-center justify-center"
             aria-label="Sign out"
-            onClick={() =>
-              act(async () => {
-                await api("/api/logout", {});
-                setState(null);
-                setView("overview");
-                setEditProfile(null);
-                setEditRevision(null);
-              })
-            }
+            href="/auth/logout"
           >
             <LogOut size={17} />
-          </button>
+          </a>
         </header>
         <main className="main-content">
           <DemoNotice />
@@ -273,7 +283,7 @@ export default function KinCardApp() {
                     A LITTLE FAMILIARITY GOES A LONG WAY
                   </p>
                   <h1>
-                    Welcome back, Sarah<span className="terracotta">.</span>
+                    Welcome back, {user?.name?.split(" ")[0] || "Family"}<span className="terracotta">.</span>
                   </h1>
                   <p>Keeping {name}’s story at the heart of every visit.</p>
                 </div>
@@ -395,7 +405,6 @@ export default function KinCardApp() {
                             <Check size={12} /> Shared by family
                           </span>
                         </div>
-                        <span className="fictional-tag">Fictional person</span>
                       </div>
                       <p className="biography">
                         {profile.biography ||
@@ -455,7 +464,7 @@ export default function KinCardApp() {
                     >
                       Share their KinCard <ArrowRight size={16} />
                     </button>
-                    <small>Demo access · Anyone with the link</small>
+                    <small>Anyone with the link can view</small>
                   </section>
                   <section className="panel activity-panel">
                     <h3>
@@ -485,10 +494,8 @@ export default function KinCardApp() {
                         <div>
                           <strong>A little story, ready to share</strong>
                           <p>
-                            Your fictional sample card is ready. Try adding a
-                            caregiver visit note.
+                            Your care card is ready. Try adding a caregiver visit note.
                           </p>
-                          <small>Ready for your demo</small>
                         </div>
                       </div>
                     )}
@@ -618,8 +625,7 @@ export default function KinCardApp() {
                     <NotebookPen size={30} />
                     <h3>A place for the little moments.</h3>
                     <p>
-                      Open the care card and leave a fictional visit note to try
-                      the full review flow.
+                      Open the care card and leave a visit note to try the full review flow.
                     </p>
                   </div>
                 )}
@@ -646,10 +652,7 @@ export default function KinCardApp() {
           )}
           <footer className="main-footer">
             <Logo />
-            <span>
-              Made for familiar moments.
-              <span className="footer-demo"> Fictional hackathon demo.</span>
-            </span>
+            <span>Made for familiar moments.</span>
             <Heart size={14} />
           </footer>
         </main>
@@ -689,7 +692,7 @@ export default function KinCardApp() {
             className="modal panel"
             role="dialog"
             aria-modal="true"
-            aria-label="Demo guide"
+            aria-label="App guide"
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -700,33 +703,23 @@ export default function KinCardApp() {
               <X />
             </button>
             <Sprout size={30} />
-            <h2>Your KinCard demo</h2>
+            <h2>KinCard Guide</h2>
             <ol>
               <li>
                 Use <strong>Family speaks</strong> to tell one story in the text
-                box or microphone. The questions are a guide, not separate
-                answers.
+                box or microphone.
               </li>
               <li>
                 Select <strong>Review privacy</strong>, edit and confirm the
-                screened text, then let Gemini organize a draft. Review and
-                approve the profile before sharing it.
+                screened text, then let Gemini organize a draft.
               </li>
               <li>
-                Open <strong>QR sharing</strong> to try the caregiver view.
-                Choose a language and select <strong>Translate card</strong> to
-                translate the card with Gemini.
+                Open <strong>QR sharing</strong> to try the caregiver view and translate card details.
               </li>
               <li>
-                Leave a visit note, then return here to approve or reject a
-                suggested update.
+                Leave a visit note, then return to approve or reject a suggested update.
               </li>
             </ol>
-            <p>
-              The demo login is <strong>family / KinCard2026!</strong>. Use
-              fictional information only. Speech availability depends on your
-              browser; typing always works.
-            </p>
             <button className="button full" onClick={() => setHelp(false)}>
               Got it <Check size={17} />
             </button>
@@ -736,11 +729,8 @@ export default function KinCardApp() {
     </div>
   );
 }
-function Login({ onLogin }: { onLogin: () => Promise<void> }) {
-  const [username, setUsername] = useState("family"),
-    [password, setPassword] = useState(""),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+
+function Login() {
   return (
     <main className="login-page">
       <section className="login-story">
@@ -776,7 +766,7 @@ function Login({ onLogin }: { onLogin: () => Promise<void> }) {
                 </span>
               </div>
             </div>
-            <span className="sample-label">FICTIONAL SAMPLE KINCARD</span>
+            <span className="sample-label">KINCARD PROFILE</span>
           </div>
         </div>
         <p className="login-bottom">
@@ -791,85 +781,38 @@ function Login({ onLogin }: { onLogin: () => Promise<void> }) {
           <h2>
             Welcome to KinCard<span className="terracotta">.</span>
           </h2>
-          <p>A familiar place to share their story.</p>
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError("");
-              try {
-                await api("/api/login", { username, password });
-                await onLogin();
-              } catch (err) {
-                setError((err as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
+          <p>Sign in with Auth0 to access your family care space.</p>
+
+          <a
+            href="/auth/login"
+            className="flex items-center justify-center gap-3 w-full py-4 px-4 rounded-xl bg-white border border-slate-200 text-slate-700 font-medium hover:bg-slate-50 transition shadow-sm my-6 text-center cursor-pointer decoration-0"
+            style={{ textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center" }}
           >
-            <label htmlFor="username">Username</label>
-            <input
-              id="username"
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="Enter the demo password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            {error && (
-              <p role="alert" className="inline-error">
-                {error}
-              </p>
-            )}
-            <button className="button full" disabled={busy}>
-              {busy ? (
-                <span className="spinner small" />
-              ) : (
-                "Sign in to family space"
-              )}
-              <ArrowRight size={18} />
-            </button>
-          </form>
-          <div className="demo-credentials">
-            <span className="section-icon">
-              <Sparkles size={17} />
-            </span>
-            <div>
-              <strong>Come in and try the demo</strong>
-              <p>
-                Username: <code>family</code>
-                <br />
-                Password: <code>KinCard2026!</code>
-              </p>
-              <button
-                className="text-button"
-                onClick={() => {
-                  setUsername("family");
-                  setPassword("KinCard2026!");
-                }}
-              >
-                Fill demo credentials <ArrowRight size={13} />
-              </button>
-            </div>
-          </div>
-          <div className="registration-demo">
-            <button disabled>Create account · demo only</button>
-            <span> · </span>
-            <button disabled>Forgot password · demo only</button>
-          </div>
+            <svg className="w-5 h-5" viewBox="0 0 24 24" style={{ width: "20px", height: "20px", marginRight: "10px" }}>
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+              />
+            </svg>
+            Continue with Auth0 (Google / Email)
+          </a>
+
           <DemoNotice />
         </div>
         <div className="login-form-footer">
-          <ShieldCheck size={16} /> A hackathon prototype, made with care.
+          <ShieldCheck size={16} /> Official Auth0 SDK v4 Multi-tenant architecture.
         </div>
       </section>
     </main>
