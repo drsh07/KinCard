@@ -1,1 +1,0 @@
-# KinCard-hack
