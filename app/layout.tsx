@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "KinCard · A little familiarity. A better visit.",
-  description: "The person behind the care. A fictional family care-card demo.",
+  description: "The person behind the care. A care card that helps every caregiver know the person.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

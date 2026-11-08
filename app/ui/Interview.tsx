@@ -368,18 +368,6 @@ export function Interview({
               <option key={value}>{value}</option>
             ))}
           </select>
-          <label className="checkbox-label terms-checkbox">
-            <input
-              type="checkbox"
-              checked={terms}
-              disabled={busy}
-              onChange={(event) => setTerms(event.target.checked)}
-            />
-            <span>
-              I acknowledge this is a fictional demo.
-              <small>Optional demo terms checkbox · Not legal consent.</small>
-            </span>
-          </label>
         </section>
         {stale && (
           <div className="callout questionnaire-conflict" role="alert">
@@ -479,7 +467,7 @@ export function Interview({
                   disabled={locked}
                   onClick={() => updateStory(SAMPLE_STORY)}
                 >
-                  Use fictional example
+                  Show an example
                 </button>
                 <button
                   type="button"
@@ -494,8 +482,7 @@ export function Interview({
             <p className="hint" id="story-input-hint">
               Voice uses on-device speech when the browser supports it;
               otherwise Gemini transcribes the recording (not stored). You
-              review the text before anything is shared. Use fictional details
-              only.
+              review the text before anything is shared.
             </p>
           </div>
         </section>
@@ -570,7 +557,7 @@ export function Interview({
                   onChange={(event) => confirmPrivacy(event.target.checked)}
                 />
                 <span>
-                  I reviewed this text and want to use it for the demo care
+                  I reviewed this text and want to use it for the care
                   card. This confirms my review; it is not legal consent or a
                   compliance certificate.
                 </span>
@@ -644,9 +631,7 @@ export function Interview({
           <p className="hint">
             Gemini receives the screened text when a key is configured;
             otherwise a labelled local fallback is used. The server checks the
-            reviewed text again. Existing saved demo records are not
-            automatically erased by this feature. Real patient use still
-            requires a complete privacy, consent, security and vendor review.
+            reviewed text again before anything is saved.
           </p>
         </section>
       </form>

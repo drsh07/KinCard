@@ -3414,6 +3414,15 @@ button:active:not(:disabled) {
 .onboarding-panel {
   display: grid;
   gap: 0.6rem;
+  padding: clamp(20px, 5vw, 36px);
+  border-radius: 20px;
+}
+.onboarding-panel label {
+  margin-top: 0.4rem;
+  font-weight: 600;
+}
+.onboarding > .eyebrow {
+  margin: 0 0 0.75rem 4px;
 }
 .onboarding-panel h1 {
   font-size: clamp(1.6rem, 5vw, 2.3rem);

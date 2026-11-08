@@ -113,7 +113,7 @@ export function GeminiStatus() {
                     : status?.configured
                       ? "Key found · connection not checked"
                       : status
-                        ? "Local demo mode · no key added"
+                        ? "Gemini not connected · add GEMINI_API_KEY"
                         : "Connection status unavailable"}
           </p>
         </div>
@@ -131,7 +131,7 @@ export function GeminiStatus() {
           Data storage:{" "}
           {status.storage === "databricks"
             ? "Databricks"
-            : "local demo database (Databricks not configured)"}
+            : "local database (Databricks not configured)"}
           .
         </p>
       )}
@@ -176,10 +176,9 @@ export function GeminiStatus() {
         </p>
       )}
       <p className="hint">
-        This workspace starts with a fictional sample card. To create your own,
-        share a story below, review privacy, then select Generate draft care
-        card. A successful Gemini draft is labelled for family review before
-        publication.
+        Share a story below, review privacy, then select Generate draft care
+        card. Gemini drafts are always reviewed by the family before they are
+        published.
       </p>
     </section>
   );

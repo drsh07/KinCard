@@ -122,6 +122,7 @@ export function Onboarding({
         <strong className="onboarding-logo">
           <Heart size={20} /> KinCard
         </strong>
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- full navigation is required for Auth0 sign-out */}
         <a className="button secondary small" href="/auth/logout">
           <LogOut size={16} /> Sign out
         </a>
@@ -133,7 +134,7 @@ export function Onboarding({
           <h1>Welcome{first ? `, ${first}` : ""}. Who are you caring for?</h1>
           <p className="hint">
             KinCard gives caregivers and visitors a familiar picture of your loved
-            one. Use fictional details for this demo.
+            one, so every visit starts with what matters to them.
           </p>
           <label htmlFor="ob-full">Their full name</label>
           <input

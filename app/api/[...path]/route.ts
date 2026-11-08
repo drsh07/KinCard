@@ -396,7 +396,7 @@ async function handle(request: Request): Promise<Response> {
     const profile = screenProfile(blend ? blend.profile : merge.profile);
     const notice = [
       result.notice,
-      mergeNotice(merge, base?.preferredName || "their"),
+      mergeNotice(merge, base?.preferredName || "the"),
       state.draft && !merge.startedNew
         ? "This builds on your earlier draft that hasn't been approved yet."
         : "",

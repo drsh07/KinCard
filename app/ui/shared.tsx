@@ -39,18 +39,9 @@ export function Logo() {
   );
 }
 
-export function DemoNotice({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={compact ? "demo-notice compact" : "demo-notice"}>
-      <span className="demo-dot" />
-      <span>
-        <strong>Multi-Tenant Workspace</strong>
-        {compact
-          ? " · Powered by Auth0 SDK v4"
-          : " · Multi-tenant account isolation with Databricks analytics backend."}
-      </span>
-    </div>
-  );
+// Production: no demo banner. Kept as a no-op so existing imports still work.
+export function DemoNotice(_props: { compact?: boolean }) {
+  return null;
 }
 
 export function Avatar({

@@ -282,7 +282,7 @@ export async function generateNarrative(
       profile: mockNarrative(story),
       mode: "mock",
       notice:
-        "Local demo mode: basic sentence matching organized parts of your story. No Gemini request was made. This fallback does not understand context like Gemini; review section placement and fill any missing details.",
+        "Without Gemini: basic sentence matching organized parts of your story. No Gemini request was made. This fallback does not understand context like Gemini; review section placement and fill any missing details.",
     };
   try {
     const output = await requestJson(

@@ -232,7 +232,7 @@ export default function KinCardApp() {
             </p>
           </div>
           <button className="nav-item" onClick={() => setHelp(true)}>
-            <HelpCircle size={19} /> Demo guide
+            <HelpCircle size={19} /> How KinCard works
           </button>
           <div className="family-user">
             {user?.picture ? (
@@ -262,7 +262,7 @@ export default function KinCardApp() {
           </span>
           <span className="workspace-badge">
             <span />
-            {user?.email ? "Auth0 Verified Account" : "Demo workspace"}
+            Your family space
           </span>
           <button
             className="icon-button"

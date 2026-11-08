@@ -27,7 +27,7 @@ export default function CareView({ token }: { token: string }) {
   const [data, setData] = useState<CardData | null>(null),
     [error, setError] = useState(""),
     [loading, setLoading] = useState(true);
-  const [author, setAuthor] = useState("Alex · demo caregiver"),
+  const [author, setAuthor] = useState(""),
     [text, setText] = useState(""),
     [busy, setBusy] = useState(false),
     [sent, setSent] = useState(false),
@@ -136,10 +136,6 @@ export default function CareView({ token }: { token: string }) {
         </span>
       </header>
       <div className="care-container">
-        <div className="demo-notice">
-          <span className="demo-dot" />
-          <span>{copy.demoNotice}</span>
-        </div>
         {loading ? (
           <div className="empty-state">
             <span className="spinner" />
@@ -252,7 +248,6 @@ export default function CareView({ token }: { token: string }) {
               </h1>
               <p className="care-full-name">{profile.fullName}</p>
               <p className="care-hero-caption">{copy.caption}</p>
-              <span className="fictional-tag">{copy.fictionalPerson}</span>
               <span className="care-flower" aria-hidden="true">
                 ✳
               </span>

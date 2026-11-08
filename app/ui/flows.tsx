@@ -118,7 +118,7 @@ export function Sharing({
             {origin && <QRImage value={link} onData={setQr} />}
           </div>
           <strong>Scan for a more familiar visit</strong>
-          <p className="muted">Fictional demo · No caregiver sign-in</p>
+          <p className="muted">No sign-in needed for caregivers</p>
           <button
             className="button full"
             onClick={() => window.open(link, "_blank", "noopener")}
@@ -161,17 +161,15 @@ export function Sharing({
               </button>
             </div>
             <p className="hint">
-              On a phone, use the hosted demo link. A localhost QR only opens on
-              the computer running the app. Hosted access may also require the
-              site owner’s sign-in.
+              Print the QR code or send the link to caregivers and visitors.
             </p>
             <div className="callout">
               <ShieldCheck size={20} />
               <p>
-                <strong>Demo access, by design.</strong>
+                <strong>Only people with this link can open the card.</strong>
                 <br />
-                Anyone who can open this link can see the fictional card and
-                leave a note. This is not health-data security.
+                It shows the approved card only, never clinical notes. Replace
+                the QR code anytime to turn off the old link.
               </p>
             </div>
             <hr />
@@ -332,7 +330,7 @@ export function ProfileEditor({
         </div>
         <span className="pill peach">
           <Sparkles size={13} />
-          {state.aiMode === "gemini" ? "Gemini draft" : "Local demo mode"}
+          {state.aiMode === "gemini" ? "Gemini draft" : "Saved without Gemini"}
         </span>
       </div>
       <div className="callout ai-notice">
@@ -342,7 +340,7 @@ export function ProfileEditor({
       {stale && (
         <div className="callout profile-stale" role="alert">
           <p>
-            The demo changed while you were editing. Reload the latest profile
+            This card changed while you were editing. Reload the latest profile
             before approving. Reloading replaces the edits shown here.
           </p>
           <button className="button secondary" type="button" onClick={onReload}>
@@ -419,7 +417,7 @@ export function ProfileEditor({
               {field === "health" && (
                 <small className="hint">
                   Family reports only. Medication doses and treatment directions
-                  cannot be published through this demo.
+                  are never published on the card.
                 </small>
               )}
             </div>
@@ -433,7 +431,7 @@ export function ProfileEditor({
               onChange={(e) => setConfirmed(e.target.checked)}
             />
             <span>
-              I have reviewed this fictional profile and approve sharing these
+              I have reviewed this profile and approve sharing these
               details.
             </span>
           </label>

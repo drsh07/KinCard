@@ -126,9 +126,9 @@ export function mergeNotice(merge: MergeResult, name: string): string {
   if (merge.startedNew)
     return "This story names a different person than the current card, so it starts a new card. Approving it replaces the current card.";
   if (!merge.addedDetails)
-    return `Everything in this story is already on ${name}'s card. Nothing new to add, and nothing was removed.`;
+    return `Everything in this story is already on ${name === "the" ? "the" : `${name}'s`} card. Nothing new to add, and nothing was removed.`;
   const sections = merge.added.map((f) => FIELD_LABELS[f]).join(", ");
-  return `Added ${merge.addedDetails} new detail${merge.addedDetails === 1 ? "" : "s"} to ${name}'s card (${sections}). Everything already on the card was kept.`;
+  return `Added ${merge.addedDetails} new detail${merge.addedDetails === 1 ? "" : "s"} to ${name === "the" ? "the" : `${name}'s`} card (${sections}). Everything already on the card was kept.`;
 }
 
 /** Which sections changed between two versions of the card. */

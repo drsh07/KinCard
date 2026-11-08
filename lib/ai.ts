@@ -114,7 +114,7 @@ export async function generateProfile(
       profile: mockProfile(answers),
       mode: "mock",
       notice:
-        "Local mock mode: answers are copied into their matching sections, with treatment directions withheld. No Gemini request was made.",
+        "Without Gemini: answers are copied into their matching sections, with treatment directions withheld. No Gemini request was made.",
     };
   try {
     const result = await requestJson(
