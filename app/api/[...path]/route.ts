@@ -10,8 +10,19 @@ import {
   checkGeminiConnection,
 } from "../../../lib/ai.ts";
 import { generateNarrative, parseStory } from "../../../lib/narrative.ts";
-import type { KinState, Suggestion, VisitNote } from "../../../lib/domain.ts";
-import { bindings, loadState, saveState } from "../../../lib/store.ts";
+import type {
+  KinState,
+  Profile,
+  ProfileField,
+  Suggestion,
+  VisitNote,
+} from "../../../lib/domain.ts";
+import {
+  bindings,
+  loadState,
+  saveState,
+  storageMode,
+} from "../../../lib/store.ts";
 import { approveProfile, decideSuggestion } from "../../../lib/transitions.ts";
 import {
   cardMemory,
@@ -21,6 +32,16 @@ import {
   withHistory,
 } from "../../../lib/memory.ts";
 import { blendNotice, blendSections } from "../../../lib/blend.ts";
+import { logEvents } from "../../../lib/events.ts";
+import type { CareEvent } from "../../../lib/events.ts";
+
+// What a section gained (for the visit log). Never logs names.
+function addedText(before: Profile | null, after: Profile, field: ProfileField) {
+  const old = before?.[field] || "";
+  const now = after[field];
+  if (!now) return null;
+  return old && now.startsWith(old) ? now.slice(old.length).trim() || null : now;
+}
 import {
   InputError,
   parseAnswers,
@@ -206,6 +227,9 @@ async function handle(request: Request): Promise<Response> {
         },
         state.revision,
       );
+      await logEvents(bindings(), [
+        { type: "visitor_note", field: suggestion?.field ?? null, note: note.text },
+      ]);
       return json(
         { note, suggestion, mode: result.mode, notice: result.notice },
         201,
@@ -216,12 +240,13 @@ async function handle(request: Request): Promise<Response> {
   if (!signedIn(request))
     throw new InputError("Please sign in with the demo family account.", 401);
   if (request.method === "GET" && route === "ai/status")
-    return json(
-      getAiStatus({
+    return json({
+      ...getAiStatus({
         key: bindings().GEMINI_API_KEY,
         model: bindings().GEMINI_MODEL,
       }),
-    );
+      storage: storageMode(),
+    });
   if (request.method === "POST" && route === "ai/check") {
     const input = await body(request);
     if (Object.keys(input).length)
@@ -323,7 +348,20 @@ async function handle(request: Request): Promise<Response> {
         : `Family edited ${fields.length} section${fields.length === 1 ? "" : "s"}`,
       fields,
     });
-    return json({ state: await saveState(next, state.revision) });
+    const saved = await saveState(next, state.revision);
+    await logEvents(
+      bindings(),
+      fields
+        .filter((f) => f !== "fullName" && f !== "preferredName")
+        .map(
+          (field): CareEvent => ({
+            type: state.draft ? "family_story" : "family_edit",
+            field,
+            note: addedText(state.profile, saved.profile!, field) || undefined,
+          }),
+        ),
+    );
+    return json({ state: saved });
   }
   if (route === "qr")
     return json({
@@ -357,7 +395,15 @@ async function handle(request: Request): Promise<Response> {
         fields: changedFields(state.profile, next.profile!),
       });
     }
-    return json({ state: await saveState(next, state.revision) });
+    const saved = await saveState(next, state.revision);
+    const decided = state.suggestions.find((s) => s.id === parts[1]);
+    if (decided)
+      await logEvents(bindings(), [
+        input.decision === "approved"
+          ? { type: "observation_approved", field: decided.field, note: decided.value }
+          : { type: "observation_rejected", field: decided.field },
+      ]);
+    return json({ state: saved });
   }
   throw new InputError("This action was not found.", 404);
 }

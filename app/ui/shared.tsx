@@ -153,6 +153,7 @@ export type AiStatus = {
   model: string;
   mode: "gemini" | "mock";
   issue?: string;
+  storage?: "databricks" | "local";
 };
 export type AiCheck = {
   ok: true;
