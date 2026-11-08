@@ -115,6 +115,8 @@ function requestError(status: number, raw: string): GeminiError {
 export type JsonRequestOptions = {
   maxOutputTokens?: number;
   maxResponseCharacters?: number;
+  // Extra input parts sent before the JSON data, e.g. an audio recording.
+  media?: { mimeType: string; data: string }[];
 };
 
 export async function requestJson(
@@ -141,7 +143,15 @@ export async function requestJson(
         signal,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: "user", parts: [{ text: JSON.stringify(data) }] }],
+          contents: [
+            {
+              role: "user",
+              parts: [
+                ...(options.media || []).map((inlineData) => ({ inlineData })),
+                { text: JSON.stringify(data) },
+              ],
+            },
+          ],
           generationConfig: {
             // Gemini 3.8 retires temperature/topP/topK. Leaving sampling at the
             // model default also keeps this request compatible with older IDs.

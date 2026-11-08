@@ -18,6 +18,7 @@ import { api } from "./shared";
 import { GeminiStatus } from "./GeminiStatus";
 import { screenText } from "../../lib/privacy";
 import { createLocalSpeech } from "../../lib/local-speech";
+import { useGeminiRecorder } from "./voice";
 import type { SpeechEngine } from "../../lib/local-speech";
 
 const questions = [
@@ -80,7 +81,15 @@ export function Interview({
   const storyRef = useRef(story);
   const dirty = snapshot(story, relationship, terms) !== savedSnapshot;
   const stale = revision.current !== state.revision;
-  const locked = busy || recording || preparingSpeech;
+  const [reviewing, setReviewing] = useState(false);
+  const [privacyNotice, setPrivacyNotice] = useState("");
+  // Gemini voice: used when on-device speech isn't available (e.g. iPhone).
+  const gemini = useGeminiRecorder("/api/transcribe", (spoken) => {
+    const base = storyRef.current;
+    updateStory(`${base}${base ? "\n\n" : ""}${spoken}`.slice(0, MAX_STORY));
+  });
+  const geminiBusy = gemini.state !== "idle";
+  const locked = busy || recording || preparingSpeech || geminiBusy || reviewing;
   const privacyReady =
     privacyDraft !== null && privacyConfirmed && privacySource === story;
 
@@ -115,11 +124,36 @@ export function Interview({
     );
     setSpeechStatus("Saved story loaded. You can type or speak to add to it.");
   }
-  function reviewPrivacy() {
-    const reviewed = screenText(storyRef.current);
+  async function reviewPrivacy() {
+    const source = storyRef.current;
+    setReviewing(true);
+    let reviewed: {
+      text: string;
+      findings: ReturnType<typeof screenText>["findings"];
+      notice?: string;
+    };
+    try {
+      const response = await fetch("/api/privacy-review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: source }),
+      });
+      if (!response.ok) throw new Error("review failed");
+      reviewed = await response.json();
+    } catch {
+      reviewed = {
+        ...screenText(source),
+        notice:
+          "Gemini's privacy check couldn't be reached, so only the basic filter ran. Please check names yourself.",
+      };
+    } finally {
+      if (mounted.current) setReviewing(false);
+    }
+    if (!mounted.current || storyRef.current !== source) return;
     setPrivacyDraft(reviewed.text);
     setPrivacyFindings(reviewed.findings);
-    setPrivacySource(storyRef.current);
+    setPrivacyNotice(reviewed.notice || "");
+    setPrivacySource(source);
     setPrivacyConfirmed(false);
     setPrivacyError("");
     requestAnimationFrame(() =>
@@ -174,6 +208,10 @@ export function Interview({
     return data.state;
   }
   async function dictate() {
+    if (gemini.state === "recording") {
+      gemini.stop();
+      return;
+    }
     if (speech.current) {
       speech.current.stop();
       return;
@@ -222,7 +260,7 @@ export function Interview({
         "Listening on your device… Select Stop when you’re done, then review privacy.",
       );
       engine.start();
-    } catch (error) {
+    } catch {
       const failedEngine = speech.current;
       speech.current = null;
       if (failedEngine) {
@@ -238,11 +276,9 @@ export function Interview({
       }
       if (mounted.current) {
         setRecording(false);
-        setSpeechStatus(
-          error instanceof Error
-            ? error.message
-            : "On-device speech is unavailable. Please type your story.",
-        );
+        // On-device speech isn't available here: use Gemini instead.
+        setSpeechStatus("");
+        void gemini.start();
       }
     } finally {
       if (mounted.current) setPreparingSpeech(false);
@@ -394,30 +430,36 @@ export function Interview({
             <div className="voice-control story-voice-control">
               <button
                 className={
-                  recording
+                  recording || gemini.state === "recording"
                     ? "button voice-button recording"
                     : "button voice-button secondary"
                 }
                 type="button"
-                disabled={busy || preparingSpeech}
-                aria-pressed={recording}
+                disabled={busy || preparingSpeech || gemini.state === "transcribing" || reviewing}
+                aria-pressed={recording || gemini.state === "recording"}
                 onClick={dictate}
               >
-                {recording ? <MicOff size={19} /> : <Mic size={19} />}
+                {recording || gemini.state === "recording" ? (
+                  <MicOff size={19} />
+                ) : (
+                  <Mic size={19} />
+                )}
                 {preparingSpeech
-                  ? "Checking on-device speech…"
-                  : recording
-                    ? "Stop recording"
-                    : "Tell their story aloud"}
+                  ? "Checking voice options…"
+                  : gemini.state === "transcribing"
+                    ? "Gemini is transcribing…"
+                    : recording || gemini.state === "recording"
+                      ? "Stop recording"
+                      : "Tell their story aloud"}
               </button>
-              <p role="status">{speechStatus}</p>
+              <p role="status">{gemini.message || speechStatus}</p>
             </div>
             <label htmlFor="family-story">Your story or voice transcript</label>
             <textarea
               id="family-story"
               value={story}
               required
-              readOnly={recording || preparingSpeech}
+              readOnly={recording || preparingSpeech || geminiBusy}
               disabled={busy}
               rows={16}
               maxLength={MAX_STORY}
@@ -450,11 +492,10 @@ export function Interview({
               </div>
             </div>
             <p className="hint" id="story-input-hint">
-              Raw text stays in this page until you review privacy. Microphone
-              input is allowed only when the browser supports on-device speech;
-              there is no automatic cloud transcription fallback. Use fictional
-              details only. Names, health information and indirect identifying
-              details still need your judgment.
+              Voice uses on-device speech when the browser supports it;
+              otherwise Gemini transcribes the recording (not stored). You
+              review the text before anything is shared. Use fictional details
+              only.
             </p>
           </div>
         </section>
@@ -467,8 +508,9 @@ export function Interview({
           </span>
           <h2 id="ready-for-card">Check privacy before sharing.</h2>
           <p>
-            A local check removes likely identifiers before any story is saved
-            or sent to Gemini. You decide what is necessary for the care card.
+            A basic filter removes numbers, emails and addresses first, then
+            Gemini removes other people’s names and details it can’t catch. You
+            review the result and decide what is necessary for the care card.
           </p>
           <button
             className="button secondary privacy-review-button"
@@ -476,11 +518,13 @@ export function Interview({
             disabled={locked || !story.trim()}
             onClick={reviewPrivacy}
           >
-            <ShieldCheck size={17} /> Review privacy
+            <ShieldCheck size={17} />{" "}
+            {reviewing ? "Checking privacy with Gemini…" : "Review privacy"}
           </button>
           {privacyDraft !== null && (
             <div className="privacy-review" id="privacy-review">
               <h3>Text you will share</h3>
+              {privacyNotice && <p className="hint">{privacyNotice}</p>}
               <p className="hint">
                 {privacyFindings.some((finding) => finding.action === "removed")
                   ? "Potential identifiers were removed. Categories marked for review remain in the text and need your judgment."

@@ -33,6 +33,8 @@ import {
 } from "../../../lib/memory.ts";
 import { blendNotice, blendSections } from "../../../lib/blend.ts";
 import { logEvents } from "../../../lib/events.ts";
+import { aiPrivacyScreen } from "../../../lib/privacy-ai.ts";
+import { transcribeAudio } from "../../../lib/transcribe.ts";
 import type { CareEvent } from "../../../lib/events.ts";
 
 // What a section gained (for the visit log). Never logs names.
@@ -73,13 +75,16 @@ function signedIn(request: Request): boolean {
 function cookie(request: Request, logout = false): string {
   return `${COOKIE}=${logout ? "" : DEMO_MARKER}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${logout ? 0 : 28800}${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`;
 }
-async function body(request: Request): Promise<Record<string, unknown>> {
+async function body(
+  request: Request,
+  max = 150000,
+): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.includes("application/json"))
     throw new InputError("Please send JSON.", 415);
-  if (Number(request.headers.get("content-length")) > 150000)
+  if (Number(request.headers.get("content-length")) > max)
     throw new InputError("This request is too large.", 413);
   const raw = await request.text();
-  if (raw.length > 150000)
+  if (raw.length > max)
     throw new InputError("This request is too large.", 413);
   try {
     return record(JSON.parse(raw));
@@ -172,6 +177,12 @@ async function handle(request: Request): Promise<Response> {
       parts[2] === "notes"
     ) {
       const input = await body(request);
+      // Pattern filter + Gemini (other residents', staff names, rooms, ...).
+      const screened = await aiPrivacyScreen(
+        text(input.text, "Visit note", 4000, true),
+        [state.profile?.preferredName || "", ...(state.profile?.fullName || "").split(/\s+/)],
+        { key: bindings().GEMINI_API_KEY, model: bindings().GEMINI_MODEL },
+      );
       const note: VisitNote = {
         id: crypto.randomUUID(),
         author: text(
@@ -180,12 +191,7 @@ async function handle(request: Request): Promise<Response> {
           80,
           true,
         ),
-        text: text(
-          screenText(text(input.text, "Visit note", 4000, true)).text,
-          "Visit note",
-          4000,
-          true,
-        ),
+        text: text(screened.text, "Visit note", 4000, true),
         createdAt: new Date().toISOString(),
       };
       if (state.notes.length >= 300)
@@ -235,6 +241,19 @@ async function handle(request: Request): Promise<Response> {
         201,
       );
     }
+    if (
+      request.method === "POST" &&
+      parts.length === 3 &&
+      parts[2] === "transcribe"
+    ) {
+      const input = await body(request, 6_000_000);
+      return json({
+        text: await transcribeAudio(input.audio, {
+          key: bindings().GEMINI_API_KEY,
+          model: bindings().GEMINI_MODEL,
+        }),
+      });
+    }
     throw new InputError("This care-card action was not found.", 404);
   }
   if (!signedIn(request))
@@ -258,6 +277,27 @@ async function handle(request: Request): Promise<Response> {
         key: bindings().GEMINI_API_KEY,
         model: bindings().GEMINI_MODEL,
       }),
+    );
+  }
+  if (request.method === "POST" && route === "transcribe") {
+    const input = await body(request, 6_000_000);
+    return json({
+      text: await transcribeAudio(input.audio, {
+        key: bindings().GEMINI_API_KEY,
+        model: bindings().GEMINI_MODEL,
+      }),
+    });
+  }
+  if (request.method === "POST" && route === "privacy-review") {
+    const input = await body(request);
+    const current = await loadState();
+    const card = current.draft || current.profile;
+    return json(
+      await aiPrivacyScreen(
+        text(input.text, "Story", 12000, true),
+        [card?.preferredName || "", ...(card?.fullName || "").split(/\s+/)],
+        { key: bindings().GEMINI_API_KEY, model: bindings().GEMINI_MODEL },
+      ),
     );
   }
   if (request.method === "GET" && route === "state")

@@ -3378,3 +3378,17 @@ button:active:not(:disabled) {
   font-size: 0.7rem;
   vertical-align: middle;
 }
+
+/* Gemini voice input */
+.voice-input {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.25rem;
+  justify-items: start;
+}
+.voice-input .hint {
+  margin: 0;
+}
+.spin {
+  animation: spin 1s linear infinite;
+}

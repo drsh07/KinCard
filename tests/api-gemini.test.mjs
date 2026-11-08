@@ -121,6 +121,8 @@ function success(data, body) {
   if (data.visitorNote)
     return envelope({ field: "conversation", value: data.visitorNote });
   if (data.fields) return envelope(translateOutput(data));
+  if (data.keepNames) return envelope({ text: data.text, removed: [] });
+  if (data.task) return envelope({ transcript: "She hummed along to folk songs." });
   if (data.sections)
     return envelope(
       Object.fromEntries(
@@ -152,7 +154,7 @@ function reset() {
     const body = JSON.parse(String(init.body));
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.ok(body.generationConfig.responseJsonSchema);
-    const data = JSON.parse(body.contents[0].parts[0].text);
+    const data = JSON.parse(body.contents[0].parts.at(-1).text);
     calls.push({ data, body });
     return provider(data, body);
   };
@@ -314,8 +316,9 @@ test("configured Gemini API flow generates a draft, publishes only after approva
     (await request(`care/${state.qrToken}`, undefined, 200, false)).profile,
     approved,
   );
-  // check, story, note, blend of the approved observation, translation, note 2
-  assert.equal(calls.length, 6);
+  // check, story, privacy+note, blend of the approved observation,
+  // privacy+note 2, translation
+  assert.equal(calls.length, 8);
   assert.ok(calls.some((call) => call.data.sections?.conversation));
 });
 
@@ -575,4 +578,38 @@ test("two stories in a row without approving both end up in the draft", async ()
   assert.match(knitting.notice, /earlier draft/);
   // Still nothing published until the family approves.
   assert.deepEqual((await request("state")).profile, initial.profile);
+});
+
+test("family privacy review uses Gemini; caregivers can dictate a note on the QR card", async () => {
+  reset();
+  const initial = await signIn();
+  provider = (data, body) => {
+    if (data.keepNames) {
+      assert.ok(data.keepNames.includes("Maggie"));
+      return envelope({
+        text: data.text.replace("Doris", "[removed]"),
+        removed: ["other person's name"],
+      });
+    }
+    return success(data, body);
+  };
+  const review = await request("privacy-review", {
+    text: "Maggie and her roommate Doris watched the birds.",
+  });
+  assert.equal(review.mode, "gemini");
+  assert.equal(review.text, "Maggie and her roommate [removed] watched the birds.");
+  assert.ok(review.findings.some((f) => /Another person's name/.test(f.label)));
+
+  // Visitor (no login) dictates on the QR card.
+  const spoken = await request(
+    `care/${initial.qrToken}/transcribe`,
+    { audio: { mimeType: "audio/mp4", data: "AAAA" } },
+    200,
+    false,
+  );
+  assert.equal(spoken.text, "She hummed along to folk songs.");
+  const media = calls.at(-1).body.contents[0].parts[0];
+  assert.equal(media.inlineData.mimeType, "audio/mp4");
+  // A wrong QR token cannot use transcription.
+  await request("care/not-a-token/transcribe", { audio: { mimeType: "audio/mp4", data: "AAAA" } }, 404, false);
 });

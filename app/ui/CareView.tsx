@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { VoiceInput } from "./voice";
 import {
   ArrowRight,
   Check,
@@ -377,6 +378,16 @@ export default function CareView({ token }: { token: string }) {
                     disabled={busy}
                     onChange={(e) => setText(e.target.value)}
                     placeholder={copy.notePlaceholder}
+                  />
+                  <VoiceInput
+                    endpoint={`/api/care/${token}/transcribe`}
+                    disabled={busy}
+                    label="Speak your note"
+                    onText={(spoken) =>
+                      setText((current) =>
+                        `${current}${current ? " " : ""}${spoken}`.slice(0, 4000),
+                      )
+                    }
                   />
                   <button
                     type="button"
