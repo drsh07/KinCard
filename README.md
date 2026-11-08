@@ -1,12 +1,71 @@
 # KinCard
 
-KinCard is a runnable hackathon demo that turns a family's story into a reviewable care card. A QR code opens the approved card for caregivers, who can share visit observations for family review.
+**Every visit should start with knowing the person.**
 
-**Use fictional people and information only.** The shared demo login and QR access are deliberately simplified. Privacy screening and translation do not make this app suitable for real patient data.
+Built at HackCamp 2026 by Darsh Sood, Alexander Lee, Kevin Akita Kang and Hamza Riaz.
 
-## Run the demo
+## Our mission
 
-Install Node.js 22.13 or later, then open a terminal in this project folder:
+People living with dementia are cared for by a constantly changing group of home-care workers, nurses, respite workers and volunteers. Most of them walk in knowing only the medical side of the person, if anything, and nothing about who they are. Without that, visits go badly: the person becomes confused or upset, care quality drops, and families end up repeating the same story to every new face.
+
+KinCard makes sure that whoever walks through the door already knows the person on the other side.
+
+## The problem
+
+- More than 770,000 Canadians live with dementia, and 17 more develop it every hour.
+- 45% of unpaid dementia caregivers show signs of distress.
+- Paper profiles like "This is me" help, but they often go unfilled (only 1 in 3 completed in one hospital study), can't be updated and end up in a drawer.
+- Care-team apps need an install and an invite code, so volunteers and substitute workers never get access.
+
+## How KinCard works
+
+**For the family (one account, about 10 minutes)**
+
+1. Describe your loved one in your own words, by typing or dictating.
+2. A privacy review removes details like phone numbers, addresses and health-card numbers.
+3. Gemini organizes the story into a short care card. You review and approve it.
+4. Print the QR code and put it on the fridge.
+
+**For caregivers and visitors (no account, no app)**
+
+1. Scan the QR code with your phone camera.
+2. Read the card in 30 seconds: what to call them, what calms them, what to avoid, what to talk about and their routine.
+3. Translate it into any of 12 languages with one tap.
+4. Leave a quick note after the visit.
+
+**It gets better every visit.** Gemini turns caregiver notes into suggested updates, and nothing changes until the family approves.
+
+## Key features
+
+- **No app or login for caregivers:** just a QR code and a phone browser
+- **AI that organizes, never invents:** Gemini uses structured output to sort the family's own words into fixed fields, and every response is validated
+- **Privacy by design:** no diagnoses, medications or addresses on the card; sensitive details are screened before anything is saved or sent to AI
+- **On-device voice input:** microphone audio is never uploaded
+- **Translation into 12 languages,** including Punjabi, Tagalog and Simplified and Traditional Chinese
+- **Family stays in control:** every change needs approval, and replacing the QR link kills the old one
+
+## Built with
+
+React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1, Drizzle ORM, Google Gemini API, Databricks and the Web Speech API.
+
+> **Demo only.** All data is fictional. The shared demo login and QR access are deliberately simplified, and KinCard is not ready for real patient information.
+
+## Run it locally
+
+**1. Install Node.js 22.13 or newer.** Download the LTS version from [nodejs.org](https://nodejs.org), then restart your terminal and check it worked:
+
+```sh
+node -v
+```
+
+**2. Get the code:**
+
+```sh
+git clone https://github.com/drsh07/KinCard.git
+cd KinCard
+```
+
+**3. Install, set up the local database, and start the app:**
 
 ```sh
 npm install
@@ -14,17 +73,25 @@ npm run setup
 npm run dev
 ```
 
-Open the Local URL printed by the server, normally [http://127.0.0.1:5173](http://127.0.0.1:5173). Sign in with:
+**4. Open the Local URL** printed by the server, normally [http://127.0.0.1:5173](http://127.0.0.1:5173). The first load can take 20 to 30 seconds. Sign in with:
 
 | Username | Password |
 | --- | --- |
 | `family` | `KinCard2026!` |
 
-No Codex account or OpenAI API key is needed to run the app. Setup instructions for teammates are in [TEAM-SETUP.md](TEAM-SETUP.md). Each computer has its own persistent local demo database; code changes do not synchronize demo records.
+The app works without any API key using a clearly labelled local preview. To use real AI generation and translation, add a Gemini key (see **Connect Gemini** below). Each computer has its own local demo database, so demo records don't sync between teammates. Setup tips for teammates are in [TEAM-SETUP.md](TEAM-SETUP.md).
+
+**5. Try it on a phone (optional).** The QR code points to the address the app is open on, and `127.0.0.1` only works on your own computer. Keep `npm run dev` running and, in a second terminal, run:
+
+```sh
+npx cloudflared tunnel --url http://127.0.0.1:5173
+```
+
+Open the app through the `https://….trycloudflare.com` link it prints, then go to **QR sharing**. Any phone can now scan the code.
 
 ## Connect Gemini and generate a real card
 
-The API-ready download includes a blank `.env.local` next to `package.json`. Open it in VS Code and enter your key after `GEMINI_API_KEY=`. If you are starting from GitHub and the local file is absent, copy the example configuration:
+If `.env.local` doesn't exist yet, copy the example configuration:
 
 ```sh
 cp .env.example .env.local
@@ -92,7 +159,7 @@ After generating a draft, the family can edit the profile and explicitly approve
 
 QR sharing provides a real code, a copyable link, and a PNG download. Replacing the QR link retires the previous link. At the app level, anyone with an active link can view the fictional approved profile and submit a note; this is not caregiver authentication. A private hosted Site may additionally require the owner's hosting sign-in.
 
-A QR with `localhost` or `127.0.0.1` works only on the computer serving the app. For a separate phone, open the demo through a reachable host and generate the QR from that origin.
+A QR with `localhost` or `127.0.0.1` works only on the computer serving the app. For a separate phone, see step 5 of **Run it locally**.
 
 ## Privacy obligations in British Columbia
 
@@ -113,3 +180,4 @@ npm run build
 The app uses React, TypeScript, Vinext/Vite, server API routes, and Cloudflare D1. Local records persist under `.wrangler/state`; hosted D1 is a separate database. `lib/privacy.ts` contains the heuristic text screen, `lib/local-speech.ts` enforces local-only recognition, and `lib/translation.ts` validates Gemini translation responses. Tests cover screening, speech capability handling, translation validation, and profile transitions using fictional or mocked inputs. Live results still require human review.
 
 The login is one shared demo account, not production security. The privacy screen cannot guarantee complete removal, legal compliance, vendor behaviour, or translation accuracy. Do not use real patient information in this MVP.
+
