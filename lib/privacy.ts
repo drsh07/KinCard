@@ -1,4 +1,4 @@
-import { PROFILE_FIELDS } from "./domain.ts";
+import { PROFILE_FIELDS, fieldMax } from "./domain.ts";
 import type { Answers, Profile } from "./domain.ts";
 import { InputError, text } from "./validation.ts";
 
@@ -235,8 +235,7 @@ export function requirePrivacyReviewed(
 export function screenAnswers(answers: Answers): Answers {
   return Object.fromEntries(
     PROFILE_FIELDS.map((field) => {
-      const max =
-        field === "fullName" || field === "preferredName" ? 160 : 4000;
+      const max = fieldMax(field);
       return [
         field,
         text(screenText(answers[field]).text, "Screened answer", max),

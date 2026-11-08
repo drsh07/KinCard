@@ -19,6 +19,21 @@ import type { KinState, Profile, Suggestion } from "../../lib/domain";
 import { FIELD_LABELS, PROFILE_FIELDS } from "../../lib/domain";
 import { api } from "./shared";
 export { Interview } from "./Interview";
+// Grow each card section to show all of its text, so additions are visible.
+function fitRows(value: string): number {
+  const lines = value
+    .split("\n")
+    .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 70)), 0);
+  return Math.min(24, Math.max(3, lines + 1));
+}
+// After render, size to the real content height (works at any screen width).
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  requestAnimationFrame(() => {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  });
+}
 export function QRImage({
   value,
   onData,
@@ -371,7 +386,14 @@ export function ProfileEditor({
                 field === "fullName" || field === "preferredName" ? "" : "wide"
               }
             >
-              <label htmlFor={`edit-${field}`}>{FIELD_LABELS[field]}</label>
+              <label htmlFor={`edit-${field}`}>
+                {FIELD_LABELS[field]}
+                {state.draft &&
+                  state.profile &&
+                  profile[field] !== state.profile[field] && (
+                    <span className="pill peach updated-pill">Updated</span>
+                  )}
+              </label>
               {field === "fullName" || field === "preferredName" ? (
                 <input
                   id={`edit-${field}`}
@@ -384,8 +406,9 @@ export function ProfileEditor({
               ) : (
                 <textarea
                   id={`edit-${field}`}
-                  rows={3}
-                  maxLength={4000}
+                  rows={fitRows(profile[field])}
+                  ref={autoGrow}
+                  maxLength={10000}
                   value={profile[field]}
                   placeholder="Not shared yet"
                   onChange={(e) =>
@@ -431,6 +454,39 @@ export function ProfileEditor({
           <small>Only your approved version appears at the QR link.</small>
         </div>
       </section>
+      {(state.history?.length ?? 0) > 0 && (
+        <details className="panel source-story card-history">
+          <summary>
+            How this card has grown · {state.history!.length} update
+            {state.history!.length === 1 ? "" : "s"}
+          </summary>
+          <p className="hint">
+            Every story and approved visit adds to the card. Earlier details
+            are kept.
+          </p>
+          <ul>
+            {state.history!.slice(0, 12).map((entry) => (
+              <li key={entry.id}>
+                <strong>
+                  {new Date(entry.at).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </strong>{" "}
+                · {entry.summary}
+                {entry.fields.length > 0 && (
+                  <small>
+                    {" "}
+                    ({entry.fields.map((f) => FIELD_LABELS[f]).join(", ")})
+                  </small>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </>
   );
 }

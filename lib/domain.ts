@@ -14,6 +14,21 @@ export type ProfileField = (typeof PROFILE_FIELDS)[number];
 export type Answers = Record<ProfileField, string>;
 export type Profile = Answers & { uncertainties: string[] };
 export type AiMode = "mock" | "gemini";
+// Card sections grow over time (family stories + approved visit observations).
+export const CARD_FIELD_MAX = 10000;
+export const NAME_FIELD_MAX = 160;
+export const fieldMax = (field: ProfileField) =>
+  field === "fullName" || field === "preferredName"
+    ? NAME_FIELD_MAX
+    : CARD_FIELD_MAX;
+// The card's memory: every approved change, newest first.
+export type CardUpdate = {
+  id: string;
+  at: string;
+  source: "family story" | "family edit" | "visitor observation";
+  summary: string;
+  fields: ProfileField[];
+};
 export type VisitNote = {
   id: string;
   author: string;
@@ -47,6 +62,7 @@ export type KinState = {
   aiNotice: string;
   updatedAt: string;
   profileUpdatedAt: string;
+  history?: CardUpdate[];
 };
 export const FIELD_LABELS: Record<ProfileField, string> = {
   fullName: "Full name",

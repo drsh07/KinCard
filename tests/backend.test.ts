@@ -239,15 +239,16 @@ test("stale revisions and changed fields cannot overwrite family edits", () => {
       baseValue: "Old text",
     },
   ];
-  assert.throws(
-    () => decideSuggestion(state, "s1", "approved"),
-    /section changed/,
-  );
+  // Additive: an observation is appended to the CURRENT section, so a family
+  // edit made after the note arrived is kept, not overwritten.
+  const approved = decideSuggestion(state, "s1", "approved");
+  assert.ok(approved.profile!.comfort.startsWith(state.profile!.comfort));
+  assert.match(approved.profile!.comfort, /Visitor observation: Quiet music/);
 });
 test("validation bounds fields, disallows unknown fields, requires reviewed name", () => {
   assert.throws(() => parseAnswers({ fake: "x" }), /Unknown/);
   assert.throws(
-    () => parseAnswers({ ...emptyAnswers(), biography: "x".repeat(4001) }),
+    () => parseAnswers({ ...emptyAnswers(), biography: "x".repeat(10001) }),
     /too long/,
   );
   assert.throws(

@@ -121,6 +121,15 @@ function success(data, body) {
   if (data.visitorNote)
     return envelope({ field: "conversation", value: data.visitorNote });
   if (data.fields) return envelope(translateOutput(data));
+  if (data.sections)
+    return envelope(
+      Object.fromEntries(
+        Object.entries(data.sections).map(([field, s]) => [
+          field,
+          `${s.current} ${s.add}`,
+        ]),
+      ),
+    );
   assert.fail("Unexpected Gemini request type");
 }
 function reset() {
@@ -305,7 +314,9 @@ test("configured Gemini API flow generates a draft, publishes only after approva
     (await request(`care/${state.qrToken}`, undefined, 200, false)).profile,
     approved,
   );
-  assert.equal(calls.length, 5);
+  // check, story, note, blend of the approved observation, translation, note 2
+  assert.equal(calls.length, 6);
+  assert.ok(calls.some((call) => call.data.sections?.conversation));
 });
 
 const failures = [
@@ -442,4 +453,126 @@ test("configured API rejects unreviewed or detectable private input before calli
   );
   assert.equal(calls.length, 0);
   assert.equal(database.payload, original);
+});
+
+test("a new story about the same person ADDS to the approved card; Gemini sees the card as memory", async () => {
+  reset();
+  const initial = await signIn();
+  const original = structuredClone(initial.profile);
+  const addition = (value) =>
+    Object.fromEntries(
+      PROFILE_FIELDS.map((field) => [
+        field,
+        field === "conversation"
+          ? { value, evidence: [0], uncertain: false }
+          : { value: "", evidence: [], uncertain: false },
+      ]),
+    );
+  provider = (data, body) => {
+    if (data.story) {
+      assert.equal(data.existingCard.preferredName, "Maggie");
+      assert.match(body.systemInstruction.parts[0].text, /MEMORY/);
+      return envelope(addition(data.story));
+    }
+    return success(data, body);
+  };
+  const story = "She also loves classic cars.";
+  const generated = await request(
+    "generate",
+    generationInput(initial, { story }),
+  );
+  assert.equal(generated.startedNew, false);
+  assert.deepEqual(generated.added, ["conversation"]);
+  assert.ok(generated.profile.conversation.startsWith(original.conversation));
+  assert.match(generated.profile.conversation, /classic cars/);
+  for (const field of PROFILE_FIELDS)
+    if (field !== "conversation")
+      assert.equal(generated.profile[field], original[field], field);
+  assert.match(generated.notice, /Everything already on the card was kept/);
+  assert.match(generated.notice, /Gemini blended/);
+  const blendCall = calls.find((call) => call.data.sections);
+  assert.deepEqual(Object.keys(blendCall.data.sections), ["conversation"]);
+  assert.equal(blendCall.data.sections.conversation.current, original.conversation);
+
+  const approved = (
+    await request("approve-profile", {
+      profile: generated.profile,
+      revision: generated.state.revision,
+    })
+  ).state;
+  assert.match(approved.profile.conversation, /garden/);
+  assert.match(approved.profile.conversation, /classic cars/);
+  assert.equal(approved.history[0].source, "family story");
+  assert.deepEqual(approved.history[0].fields, ["conversation"]);
+
+  // Telling the same thing again adds nothing and removes nothing.
+  const again = await request("generate", generationInput(approved, { story }));
+  assert.deepEqual(again.profile.conversation, approved.profile.conversation);
+  assert.deepEqual(again.added, []);
+  assert.match(again.notice, /already on Maggie's card/);
+});
+
+test("a blend that would drop an earlier detail is refused; the plain line is kept", async () => {
+  reset();
+  const initial = await signIn();
+  const original = structuredClone(initial.profile);
+  provider = (data, body) => {
+    if (data.story)
+      return envelope(
+        Object.fromEntries(
+          PROFILE_FIELDS.map((field) => [
+            field,
+            field === "conversation"
+              ? { value: data.story, evidence: [0], uncertain: false }
+              : { value: "", evidence: [], uncertain: false },
+          ]),
+        ),
+      );
+    if (data.sections) return envelope({ conversation: "She loves classic cars." });
+    return success(data, body);
+  };
+  const generated = await request(
+    "generate",
+    generationInput(initial, { story: "She loves classic cars." }),
+  );
+  assert.equal(
+    generated.profile.conversation,
+    `${original.conversation}\n\nShe loves classic cars.`,
+  );
+  assert.doesNotMatch(generated.notice, /Gemini blended/);
+});
+
+test("two stories in a row without approving both end up in the draft", async () => {
+  reset();
+  const initial = await signIn();
+  provider = (data, body) => {
+    if (data.story)
+      return envelope(
+        Object.fromEntries(
+          PROFILE_FIELDS.map((field) => [
+            field,
+            field === "biography"
+              ? { value: data.story, evidence: [0], uncertain: false }
+              : { value: "", evidence: [], uncertain: false },
+          ]),
+        ),
+      );
+    return success(data, body);
+  };
+  const cars = await request(
+    "generate",
+    generationInput(initial, { story: "She loves classic cars." }),
+  );
+  assert.match(cars.profile.biography, /classic cars/);
+  // No approval here. A second story must build on the cars draft.
+  const knitting = await request(
+    "generate",
+    generationInput(cars.state, { story: "She has started knitting." }),
+  );
+  assert.ok(knitting.profile.biography.startsWith(initial.profile.biography));
+  assert.match(knitting.profile.biography, /classic cars/);
+  assert.match(knitting.profile.biography, /knitting/);
+  assert.match(knitting.notice, /earlier draft/);
+  // Still nothing published until the family approves.
+  assert.deepEqual((await request("state")).profile, initial.profile);
 });

@@ -1,4 +1,4 @@
-import { PROFILE_FIELDS, emptyAnswers } from "./domain.ts";
+import { PROFILE_FIELDS, emptyAnswers, fieldMax } from "./domain.ts";
 import type { Answers, Profile, ProfileField } from "./domain.ts";
 
 export class InputError extends Error {
@@ -31,11 +31,7 @@ export function parseAnswers(value: unknown): Answers {
   const source = record(value);
   const result = emptyAnswers();
   for (const field of PROFILE_FIELDS)
-    result[field] = text(
-      source[field] ?? "",
-      field,
-      field === "fullName" || field === "preferredName" ? 160 : 4000,
-    );
+    result[field] = text(source[field] ?? "", field, fieldMax(field));
   if (
     Object.keys(source).some(
       (field) => !PROFILE_FIELDS.includes(field as ProfileField),

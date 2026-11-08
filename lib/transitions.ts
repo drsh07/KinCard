@@ -1,3 +1,4 @@
+import { CARD_FIELD_MAX } from "./domain.ts";
 import type { KinState, Profile, Suggestion } from "./domain.ts";
 import { InputError, sanitizeProfile } from "./validation.ts";
 
@@ -34,18 +35,14 @@ export function decideSuggestion(
         "Approve a family profile before adding visit observations.",
         409,
       );
-    if (profile[suggestion.field] !== suggestion.baseValue)
-      throw new InputError(
-        "This section changed since the note was submitted. Review the note and add it manually if still relevant.",
-        409,
-      );
-    const value = [
-      profile[suggestion.field],
-      `Visitor observation: ${suggestion.value}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    if (value.length > 4000)
+    // Additive: the observation is appended to the CURRENT section, so it is
+    // safe even if the family edited the section after the note came in.
+    const current = profile[suggestion.field];
+    const observation = `Visitor observation: ${suggestion.value}`;
+    const value = current.includes(suggestion.value)
+      ? current
+      : [current, observation].filter(Boolean).join("\n\n");
+    if (value.length > CARD_FIELD_MAX)
       throw new InputError(
         "This section is full. Edit the profile to make space before approving.",
       );

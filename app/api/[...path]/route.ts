@@ -14,6 +14,14 @@ import type { KinState, Suggestion, VisitNote } from "../../../lib/domain.ts";
 import { bindings, loadState, saveState } from "../../../lib/store.ts";
 import { approveProfile, decideSuggestion } from "../../../lib/transitions.ts";
 import {
+  cardMemory,
+  changedFields,
+  mergeNotice,
+  mergeProfile,
+  withHistory,
+} from "../../../lib/memory.ts";
+import { blendNotice, blendSections } from "../../../lib/blend.ts";
+import {
   InputError,
   parseAnswers,
   parseProfile,
@@ -47,10 +55,10 @@ function cookie(request: Request, logout = false): string {
 async function body(request: Request): Promise<Record<string, unknown>> {
   if (!request.headers.get("content-type")?.includes("application/json"))
     throw new InputError("Please send JSON.", 415);
-  if (Number(request.headers.get("content-length")) > 50000)
+  if (Number(request.headers.get("content-length")) > 150000)
     throw new InputError("This request is too large.", 413);
   const raw = await request.text();
-  if (raw.length > 50000)
+  if (raw.length > 150000)
     throw new InputError("This request is too large.", 413);
   try {
     return record(JSON.parse(raw));
@@ -243,6 +251,9 @@ async function handle(request: Request): Promise<Response> {
     return json({ state: await saveState(next, state.revision) });
   }
   if (route === "generate") {
+    // Build on the newest version: an unapproved draft if there is one, so
+    // several stories in a row all add up before the family approves.
+    const base = state.draft || state.profile;
     const config = bindings();
     const aiConfig = { key: config.GEMINI_API_KEY, model: config.GEMINI_MODEL };
     const submitted =
@@ -252,8 +263,30 @@ async function handle(request: Request): Promise<Response> {
     const result =
       "answers" in submitted
         ? await generateProfile(submitted.answers, aiConfig)
-        : await generateNarrative(submitted.story, aiConfig);
-    const profile = screenProfile(result.profile);
+        : await generateNarrative(
+            submitted.story,
+            aiConfig,
+            cardMemory(base),
+          );
+    // Additive: new information is merged into the approved card in code.
+    const merge = mergeProfile(base, screenProfile(result.profile));
+    // Smooth: Gemini blends new details into existing sections; code checks
+    // every earlier detail survived, else the plain added line is kept.
+    const blend =
+      base && !merge.startedNew
+        ? await blendSections(base, merge.profile, merge.additions, aiConfig)
+        : null;
+    const profile = screenProfile(blend ? blend.profile : merge.profile);
+    const notice = [
+      result.notice,
+      mergeNotice(merge, base?.preferredName || "their"),
+      state.draft && !merge.startedNew
+        ? "This builds on your earlier draft that hasn't been approved yet."
+        : "",
+      blend ? blendNotice(blend) : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     const { uncertainties: _flags, ...extractedAnswers } = profile;
     const answers =
       "answers" in submitted ? submitted.answers : extractedAnswers;
@@ -264,22 +297,32 @@ async function handle(request: Request): Promise<Response> {
         answers,
         draft: profile,
         aiMode: result.mode,
-        aiNotice: result.notice,
+        aiNotice: notice,
       },
       state.revision,
     );
     return json({
       profile,
       mode: result.mode,
-      notice: result.notice,
+      notice,
+      added: merge.added,
+      startedNew: merge.startedNew,
       state: next,
     });
   }
   if (route === "approve-profile") {
-    const next = approveProfile(
+    const approved = approveProfile(
       state,
       screenProfile(parseProfile(input.profile)),
     );
+    const fields = changedFields(state.profile, approved.profile!);
+    const next = withHistory(approved, {
+      source: state.draft ? "family story" : "family edit",
+      summary: state.draft
+        ? `Family story added to ${fields.length} section${fields.length === 1 ? "" : "s"}`
+        : `Family edited ${fields.length} section${fields.length === 1 ? "" : "s"}`,
+      fields,
+    });
     return json({ state: await saveState(next, state.revision) });
   }
   if (route === "qr")
@@ -293,8 +336,27 @@ async function handle(request: Request): Promise<Response> {
     if (input.decision !== "approved" && input.decision !== "rejected")
       throw new InputError("Choose approve or reject.");
     let next = decideSuggestion(state, parts[1], input.decision);
-    if (next.profile && input.decision === "approved")
-      next = { ...next, profile: screenProfile(next.profile) };
+    if (next.profile && input.decision === "approved") {
+      const suggestion = state.suggestions.find((s) => s.id === parts[1])!;
+      const field = suggestion.field;
+      const before = state.profile!;
+      if (before[field] && next.profile[field] !== before[field]) {
+        const config = bindings();
+        const blend = await blendSections(
+          before,
+          next.profile,
+          { [field]: `Visitor observation: ${suggestion.value}` },
+          { key: config.GEMINI_API_KEY, model: config.GEMINI_MODEL },
+        );
+        next = { ...next, profile: blend.profile };
+      }
+      next = { ...next, profile: screenProfile(next.profile!) };
+      next = withHistory(next, {
+        source: "visitor observation",
+        summary: `Visitor observation added: ${suggestion.value.slice(0, 120)}`,
+        fields: changedFields(state.profile, next.profile!),
+      });
+    }
     return json({ state: await saveState(next, state.revision) });
   }
   throw new InputError("This action was not found.", 404);
