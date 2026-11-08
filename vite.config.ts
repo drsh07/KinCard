@@ -46,11 +46,15 @@ export default defineConfig(async ({ command, mode }) => {
 
   return {
     server: {
+      // The local D1 database lives in .wrangler; watching it reloads the page on every query.
+      watch: { ignored: ["**/.wrangler/**"] },
+      // Let phones reach the dev server through a tunnel or the Wi-Fi IP.
+      allowedHosts: true as const,
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }
         : {}),
       ...(isCodexSeatbeltSandbox
-        ? { watch: { useFsEvents: false, usePolling: true } }
+        ? { watch: { ignored: ["**/.wrangler/**"], useFsEvents: false, usePolling: true } }
         : {}),
     },
     plugins: [
