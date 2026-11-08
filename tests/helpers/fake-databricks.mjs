@@ -1,6 +1,6 @@
 // A tiny stand-in for the Databricks SQL Statement Execution API.
-export function fakeDatabricks({ host, token, warehouseId, pendingFirst = false } = {}) {
-  const db = { row: null, statements: [], pending: new Map() };
+export function fakeDatabricks({ host, token, warehouseId, pendingFirst = false, failEvents = false } = {}) {
+  const db = { row: null, events: [], statements: [], pending: new Map() };
   const ok = (columns, rows, id = crypto.randomUUID()) => ({
     statement_id: id,
     status: { state: "SUCCEEDED" },
@@ -11,6 +11,21 @@ export function fakeDatabricks({ host, token, warehouseId, pendingFirst = false 
     db.statements.push(statement);
     const p = Object.fromEntries(params.map((x) => [x.name, x.value]));
     if (/^CREATE TABLE IF NOT EXISTS/.test(statement)) return ok([], []);
+    if (/^INSERT INTO \S*kincard_events/.test(statement)) {
+      if (failEvents)
+        return { status: { state: "FAILED", error: { error_code: "INSUFFICIENT_PRIVILEGES", message: "no" } } };
+      const count = (statement.match(/:id\d+/g) || []).length;
+      for (let i = 0; i < count; i++)
+        db.events.push({
+          at: p[`at${i}`],
+          event_type: p[`type${i}`],
+          section: p[`section${i}`],
+          note: p[`note${i}`],
+          source: p[`source${i}`],
+          household: p[`household${i}`],
+        });
+      return ok(["num_affected_rows"], [[String(count)]]);
+    }
     if (/^SELECT payload FROM/.test(statement))
       return ok(["payload"], db.row ? [[db.row.payload]] : []);
     if (/^INSERT INTO/.test(statement)) {
