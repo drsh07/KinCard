@@ -73,6 +73,12 @@ export default defineConfig(async ({ command, mode }) => {
                   GEMINI_MODEL: localEnv.GEMINI_MODEL || "gemini-3.8-flash",
                   // Optional Databricks storage. Leave unset to use the local demo DB.
                   DATABRICKS_HOST: localEnv.DATABRICKS_HOST || "",
+                  // Auth0 sign-in for local dev (on Vercel these are project settings).
+                  AUTH0_DOMAIN: localEnv.AUTH0_DOMAIN || "",
+                  AUTH0_CLIENT_ID: localEnv.AUTH0_CLIENT_ID || "",
+                  AUTH0_CLIENT_SECRET: localEnv.AUTH0_CLIENT_SECRET || "",
+                  AUTH0_SECRET: localEnv.AUTH0_SECRET || "",
+                  APP_BASE_URL: localEnv.APP_BASE_URL || "",
                   DATABRICKS_TOKEN: localEnv.DATABRICKS_TOKEN || "",
                   DATABRICKS_WAREHOUSE_ID: localEnv.DATABRICKS_WAREHOUSE_ID || "",
                   DATABRICKS_TABLE: localEnv.DATABRICKS_TABLE || "",

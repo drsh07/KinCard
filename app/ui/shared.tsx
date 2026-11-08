@@ -19,6 +19,14 @@ import type {
 } from "../../lib/domain";
 import { FIELD_LABELS } from "../../lib/domain";
 import type { CareTranslation } from "../../lib/care-language";
+
+export type AuthUser = {
+  sub: string;
+  name?: string;
+  email?: string;
+  picture?: string;
+};
+
 export function Logo() {
   return (
     <span className="logo">
@@ -30,19 +38,21 @@ export function Logo() {
     </span>
   );
 }
+
 export function DemoNotice({ compact = false }: { compact?: boolean }) {
   return (
     <div className={compact ? "demo-notice compact" : "demo-notice"}>
       <span className="demo-dot" />
       <span>
-        <strong>Fictional demo</strong>
+        <strong>Multi-Tenant Workspace</strong>
         {compact
-          ? " · No real patient data"
-          : " · Simplified login and QR access. Not suitable for real patient data."}
+          ? " · Powered by Auth0 SDK v4"
+          : " · Multi-tenant account isolation with Databricks analytics backend."}
       </span>
     </div>
   );
 }
+
 export function Avatar({
   name = "Maggie",
   large = false,
@@ -66,6 +76,7 @@ export function Avatar({
     </div>
   );
 }
+
 const icons = {
   biography: Sprout,
   conversation: MessageCircle,
@@ -76,6 +87,7 @@ const icons = {
   health: ShieldCheck,
   extra: NotebookPen,
 };
+
 export function CareSections({
   profile,
   compact = false,
@@ -123,6 +135,7 @@ export function CareSections({
     </div>
   );
 }
+
 export function formatDate(value: string) {
   return new Date(value).toLocaleString(undefined, {
     month: "short",
@@ -131,6 +144,7 @@ export function formatDate(value: string) {
     minute: "2-digit",
   });
 }
+
 type CareResponse = {
   profile: Profile | null;
   updatedAt: string;
@@ -161,6 +175,7 @@ export type AiCheck = {
   model: string;
   notice: string;
 };
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -170,6 +185,7 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
+
 export function api(
   path: "/api/ai/status",
   body?: undefined,
@@ -190,6 +206,11 @@ export function api(
   body?: undefined,
   signal?: AbortSignal,
 ): Promise<KinState>;
+export function api(
+  path: "/api/auth/me",
+  body?: undefined,
+  signal?: AbortSignal,
+): Promise<{ user: AuthUser | null }>;
 export function api(path: `/api/care/${string}`): Promise<CareResponse>;
 export function api(
   path: "/api/generate",
@@ -200,11 +221,7 @@ export function api(
   body: unknown,
   signal?: AbortSignal,
 ): Promise<NoteResponse>;
-export function api(
-  path: "/api/login" | "/api/logout",
-  body: unknown,
-): Promise<{ ok: boolean; demoOnly?: boolean }>;
-export function api(path: string, body: unknown): Promise<StateResponse>;
+export function api(path: string, body?: unknown, signal?: AbortSignal): Promise<StateResponse>;
 export async function api(
   path: string,
   body?: unknown,
@@ -223,7 +240,7 @@ export async function api(
   } catch (error) {
     if (signal?.aborted) throw error;
     throw new ApiError(
-      "KinCard could not be reached. Keep the app’s server running, then try again.",
+      "KinCard could not be reached. Keep the server running and try again.",
       0,
     );
   }

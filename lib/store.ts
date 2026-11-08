@@ -1,5 +1,4 @@
-import { env } from "cloudflare:workers";
-import { seedState } from "./domain.ts";
+import { emptyState, seedState } from "./domain.ts";
 import type { KinState } from "./domain.ts";
 import { InputError } from "./validation.ts";
 import {
@@ -18,88 +17,127 @@ type Bindings = {
   DATABRICKS_TABLE?: string;
   DATABRICKS_CATALOG?: string;
   DATABRICKS_SCHEMA?: string;
+  AUTH0_SECRET?: string;
+  APP_BASE_URL?: string;
+  AUTH0_DOMAIN?: string;
+  AUTH0_CLIENT_ID?: string;
+  AUTH0_CLIENT_SECRET?: string;
 };
+
+// In-memory fallback state map for local Node execution when D1/Databricks aren't bound
+const localMemoryStore = new Map<string, KinState>();
+
 export function bindings(): Bindings {
-  return env as Bindings;
+  let cfEnv: Record<string, unknown> = {};
+  try {
+    const cf = require("cloudflare:workers");
+    if (cf?.env) cfEnv = cf.env;
+  } catch {}
+
+  const processEnv = typeof process !== "undefined" && process.env ? process.env : {};
+
+  return {
+    ...cfEnv,
+    ...processEnv,
+  } as Bindings;
 }
-function database(): D1Database {
-  const db = bindings().DB;
-  if (!db)
-    throw new InputError(
-      "Demo database is not configured. Run npm run setup, then restart the app.",
-      503,
-    );
-  return db;
-}
-/** "databricks" when DATABRICKS_* settings are present, else the local demo DB. */
+
 export function storageMode(): "databricks" | "local" {
   try {
     return databricksConfig(bindings()) ? "databricks" : "local";
   } catch {
-    return "databricks";
+    return "local";
   }
 }
-export async function loadState(): Promise<KinState> {
-  const remote = databricksConfig(bindings());
-  if (remote)
-    return JSON.parse(await databricksLoad(remote, seedState)) as KinState;
-  const db = database();
-  try {
-    let row = await db
-      .prepare("SELECT payload FROM households WHERE id = ?")
-      .bind("demo")
-      .first<{ payload: string }>();
-    if (!row) {
-      const state = seedState();
-      await db
-        .prepare(
-          "INSERT OR IGNORE INTO households (id, revision, payload) VALUES (?, ?, ?)",
-        )
-        .bind("demo", state.revision, JSON.stringify(state))
-        .run();
-      row = await db
+
+// The fictional demo card starts with Maggie; every real family starts empty.
+const seedFor = (userId: string) => () =>
+  userId === "demo" ? seedState() : emptyState(userId);
+
+export async function loadState(userId: string = "demo"): Promise<KinState> {
+  const envVars = bindings();
+  const remote = databricksConfig(envVars);
+  
+  // 1. Try Databricks if configured
+  if (remote) {
+    return JSON.parse(await databricksLoad(remote, seedFor(userId), userId)) as KinState;
+  }
+  
+  // 2. Try Cloudflare D1 Database if bound
+  const db = envVars.DB;
+  if (db) {
+    try {
+      let row = await db
         .prepare("SELECT payload FROM households WHERE id = ?")
-        .bind("demo")
+        .bind(userId)
         .first<{ payload: string }>();
-    }
-    if (!row) throw new Error("Missing demo row");
-    return JSON.parse(row.payload) as KinState;
-  } catch (error) {
-    if (error instanceof InputError) throw error;
-    throw new InputError(
-      "The demo database needs setup. Stop the server, run npm run setup, then start it again.",
-      503,
-    );
+
+      if (!row) {
+        const state = seedFor(userId)();
+        await db
+          .prepare(
+            "INSERT OR IGNORE INTO households (id, revision, payload) VALUES (?, ?, ?)",
+          )
+          .bind(userId, state.revision, JSON.stringify(state))
+          .run();
+        row = await db
+          .prepare("SELECT payload FROM households WHERE id = ?")
+          .bind(userId)
+          .first<{ payload: string }>();
+      }
+      if (row) return JSON.parse(row.payload) as KinState;
+    } catch {}
   }
+
+  // 3. Fallback to in-memory store for local Node/Vinext development
+  if (!localMemoryStore.has(userId)) {
+    localMemoryStore.set(userId, seedFor(userId)());
+  }
+  return localMemoryStore.get(userId)!;
 }
+
 export async function saveState(
   state: KinState,
   expectedRevision: number,
+  userId: string = "demo",
 ): Promise<KinState> {
   const next = {
     ...state,
     revision: expectedRevision + 1,
     updatedAt: new Date().toISOString(),
   };
-  const remote = databricksConfig(bindings());
+
+  const envVars = bindings();
+  const remote = databricksConfig(envVars);
+  
+  // 1. Save to Databricks if configured
   if (remote) {
-    if (!(await databricksSave(remote, next, expectedRevision)))
+    if (!(await databricksSave(remote, next, expectedRevision, userId)))
       throw new InputError(
-        "The demo changed in another tab. Refresh and review the latest version before trying again.",
+        "The household state changed in another session. Refresh and review the latest version.",
         409,
       );
     return next;
   }
-  const result = await database()
-    .prepare(
-      "UPDATE households SET payload = ?, revision = ? WHERE id = ? AND revision = ?",
-    )
-    .bind(JSON.stringify(next), next.revision, "demo", expectedRevision)
-    .run();
-  if (!result.meta.changes)
+
+  // 2. Save to Cloudflare D1 if bound
+  const db = envVars.DB;
+  if (db) {
+    const result = await db
+      .prepare(
+        "UPDATE households SET payload = ?, revision = ? WHERE id = ? AND revision = ?",
+      )
+      .bind(JSON.stringify(next), next.revision, userId, expectedRevision)
+      .run();
+
+    if (result.meta.changes) return next;
     throw new InputError(
-      "The demo changed in another tab. Refresh and review the latest version before trying again.",
+      "The household state changed in another session. Refresh and review the latest version.",
       409,
     );
+  }
+
+  // 3. Save to in-memory store for local Node development
+  localMemoryStore.set(userId, next);
   return next;
 }

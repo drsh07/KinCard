@@ -64,13 +64,21 @@ test("without a Gemini key, the basic filter still works", async () => {
   assert.ok(!result.text.includes("604-555-0199"));
 });
 
-test("Gemini transcribes a recording; the audio is sent as media", async () => {
+test("Gemini transcribes an English recording; the audio is sent as media", async () => {
   const seen: { contents: { parts: Record<string, unknown>[] }[] }[] = [];
-  const transcript = await transcribeAudio(
+  const result = await transcribeAudio(
     { mimeType: "audio/webm;codecs=opus", data: "AAAA" },
-    gemini({ transcript: "She smiled when we sang folk songs." }, seen),
+    gemini(
+      {
+        language: "English",
+        transcript: "She smiled when we sang folk songs.",
+        english: "She smiled when we sang folk songs.",
+      },
+      seen,
+    ),
   );
-  assert.equal(transcript, "She smiled when we sang folk songs.");
+  assert.equal(result.text, "She smiled when we sang folk songs.");
+  assert.equal(result.translated, false);
   assert.deepEqual(seen[0].contents[0].parts[0], {
     inlineData: { mimeType: "audio/webm", data: "AAAA" },
   });
@@ -84,4 +92,19 @@ test("transcription rejects missing key, odd formats and oversized audio clearly
     transcribeAudio({ mimeType: "audio/mp4", data: "A".repeat(5_600_000) }, config),
     /too long/,
   );
+});
+
+test("speech in another language is turned into English, keeping the original", async () => {
+  const result = await transcribeAudio(
+    { mimeType: "audio/mp4", data: "AAAA" },
+    gemini({
+      language: "Mandarin",
+      transcript: "她看到花园的照片时笑了。",
+      english: "She smiled when she saw the garden photos.",
+    }),
+  );
+  assert.equal(result.text, "She smiled when she saw the garden photos.");
+  assert.equal(result.language, "Mandarin");
+  assert.equal(result.translated, true);
+  assert.equal(result.original, "她看到花园的照片时笑了。");
 });

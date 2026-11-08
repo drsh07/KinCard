@@ -31,15 +31,14 @@ const IDENTIFIER = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*){0,2}$/;
 export function databricksConfig(env: Record<string, unknown>): DatabricksConfig | null {
   const get = (name: string) =>
     typeof env[name] === "string" ? (env[name] as string).trim() : "";
-  const host = get("DATABRICKS_HOST");
+  // Accepts the names Databricks shows in Connection details, too.
+  const host = get("DATABRICKS_HOST") || get("DATABRICKS_SERVER_HOSTNAME");
   const token = get("DATABRICKS_TOKEN");
-  const warehouseId = get("DATABRICKS_WAREHOUSE_ID");
-  if (!host && !token && !warehouseId) return null; // not configured: use local DB
-  if (!host || !token || !warehouseId)
-    throw new InputError(
-      "Databricks is partly configured. Set DATABRICKS_HOST, DATABRICKS_TOKEN and DATABRICKS_WAREHOUSE_ID in .env.local (or remove all three), then restart KinCard.",
-      503,
-    );
+  const warehouseId =
+    get("DATABRICKS_WAREHOUSE_ID") ||
+    get("DATABRICKS_HTTP_PATH").split("/").filter(Boolean).pop() ||
+    "";
+  if (!host || !token || !warehouseId) return null; // not configured: local storage
   const normalizedHost = `https://${host.replace(/^https?:\/\//i, "").replace(/\/+$/, "")}`;
   if (!/^https:\/\/[A-Za-z0-9.-]+$/.test(normalizedHost))
     throw new InputError(
@@ -162,16 +161,15 @@ async function ensureTable(config: DatabricksConfig) {
   ready.add(key);
 }
 
-const ID = "demo";
-
 export async function databricksLoad(
   config: DatabricksConfig,
   seed: () => unknown,
+  id = "demo",
 ): Promise<string> {
   await ensureTable(config);
   const select = () =>
     runSql(config, `SELECT payload FROM ${config.table} WHERE id = :id LIMIT 1`, [
-      { name: "id", value: ID },
+      { name: "id", value: id },
     ]);
   let found = await select();
   if (!found.rows.length) {
@@ -180,7 +178,7 @@ export async function databricksLoad(
       config,
       `INSERT INTO ${config.table} (id, revision, payload) SELECT :id, :revision, :payload WHERE NOT EXISTS (SELECT 1 FROM ${config.table} WHERE id = :id)`,
       [
-        { name: "id", value: ID },
+        { name: "id", value: id },
         { name: "revision", value: String(state.revision), type: "BIGINT" },
         { name: "payload", value: JSON.stringify(state) },
       ],
@@ -197,6 +195,7 @@ export async function databricksSave(
   config: DatabricksConfig,
   next: { revision: number; updatedAt: string },
   expectedRevision: number,
+  id = "demo",
 ): Promise<boolean> {
   await ensureTable(config);
   const update = await runSql(
@@ -205,7 +204,7 @@ export async function databricksSave(
     [
       { name: "payload", value: JSON.stringify(next) },
       { name: "next", value: String(next.revision), type: "BIGINT" },
-      { name: "id", value: ID },
+      { name: "id", value: id },
       { name: "expected", value: String(expectedRevision), type: "BIGINT" },
     ],
   );
@@ -215,7 +214,7 @@ export async function databricksSave(
   const check = await runSql(
     config,
     `SELECT revision, payload FROM ${config.table} WHERE id = :id LIMIT 1`,
-    [{ name: "id", value: ID }],
+    [{ name: "id", value: id }],
   );
   const [revision, payload] = check.rows[0] || [];
   if (Number(revision) !== next.revision || !payload) return false;
