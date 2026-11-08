@@ -29,7 +29,16 @@ const config = (fetcher: typeof fetch) => ({
 
 test("Databricks settings: none means local DB, partial is a clear error, host is normalized", () => {
   assert.equal(databricksConfig({}), null);
-  assert.throws(() => databricksConfig({ DATABRICKS_HOST: "x.cloud.databricks.com" }), /partly configured/);
+  assert.equal(databricksConfig({ DATABRICKS_HOST: "x.cloud.databricks.com" }), null, "partial settings fall back to local storage");
+  // Names copied from Databricks' Connection details also work.
+  assert.equal(
+    databricksConfig({
+      DATABRICKS_SERVER_HOSTNAME: "dbc-fictional.cloud.databricks.com",
+      DATABRICKS_HTTP_PATH: "/sql/1.0/warehouses/abc123",
+      DATABRICKS_TOKEN: token,
+    })!.warehouseId,
+    "abc123",
+  );
   const c = databricksConfig({
     DATABRICKS_HOST: "https://dbc-fictional.cloud.databricks.com/",
     DATABRICKS_TOKEN: token,

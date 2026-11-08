@@ -1,4 +1,4 @@
-import { seedState } from "./domain.ts";
+import { emptyState, seedState } from "./domain.ts";
 import type { KinState } from "./domain.ts";
 import { InputError } from "./validation.ts";
 import {
@@ -50,13 +50,17 @@ export function storageMode(): "databricks" | "local" {
   }
 }
 
+// The fictional demo card starts with Maggie; every real family starts empty.
+const seedFor = (userId: string) => () =>
+  userId === "demo" ? seedState() : emptyState(userId);
+
 export async function loadState(userId: string = "demo"): Promise<KinState> {
   const envVars = bindings();
   const remote = databricksConfig(envVars);
   
   // 1. Try Databricks if configured
   if (remote) {
-    return JSON.parse(await databricksLoad(remote, seedState, userId)) as KinState;
+    return JSON.parse(await databricksLoad(remote, seedFor(userId), userId)) as KinState;
   }
   
   // 2. Try Cloudflare D1 Database if bound
@@ -69,7 +73,7 @@ export async function loadState(userId: string = "demo"): Promise<KinState> {
         .first<{ payload: string }>();
 
       if (!row) {
-        const state = seedState();
+        const state = seedFor(userId)();
         await db
           .prepare(
             "INSERT OR IGNORE INTO households (id, revision, payload) VALUES (?, ?, ?)",
@@ -87,7 +91,7 @@ export async function loadState(userId: string = "demo"): Promise<KinState> {
 
   // 3. Fallback to in-memory store for local Node/Vinext development
   if (!localMemoryStore.has(userId)) {
-    localMemoryStore.set(userId, seedState());
+    localMemoryStore.set(userId, seedFor(userId)());
   }
   return localMemoryStore.get(userId)!;
 }
@@ -127,6 +131,10 @@ export async function saveState(
       .run();
 
     if (result.meta.changes) return next;
+    throw new InputError(
+      "The household state changed in another session. Refresh and review the latest version.",
+      409,
+    );
   }
 
   // 3. Save to in-memory store for local Node development

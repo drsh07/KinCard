@@ -23,6 +23,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 import type { KinState, Profile, Suggestion } from "../../lib/domain";
+import { Onboarding } from "./Onboarding";
 import {
   api,
   ApiError,
@@ -156,6 +157,19 @@ export default function KinCardApp() {
     );
 
   if (!state || (state as any).unauthenticated) return <Login />;
+  // A new account has no card yet: set up the patient first, then the dashboard.
+  if (!state.profile)
+    return (
+      <Onboarding
+        state={state}
+        userName={user?.name}
+        onDone={async () => {
+          await refresh();
+          setView("overview");
+          window.scrollTo({ top: 0 });
+        }}
+      />
+    );
   const pending = (state.suggestions || []).filter((x) => x.status === "pending");
   const profile = state.profile;
   const name = profile?.preferredName || "your loved one";

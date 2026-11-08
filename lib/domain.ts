@@ -97,6 +97,25 @@ export function storyFromAnswers(answers: Answers): string {
     .filter(Boolean)
     .join("\n\n");
 }
+/** A brand-new family's household: no card yet, its own QR token. */
+export function emptyState(household: string): KinState {
+  const now = new Date().toISOString();
+  return {
+    profile: null,
+    draft: null,
+    answers: emptyAnswers(),
+    relationship: "",
+    terms: false,
+    notes: [],
+    suggestions: [],
+    revision: 1,
+    qrToken: `${household}.${crypto.randomUUID()}`,
+    aiMode: "mock",
+    aiNotice: "Tell their story to create the first care card.",
+    updatedAt: now,
+    profileUpdatedAt: now,
+  };
+}
 export function seedState(): KinState {
   const profile: Profile = {
     fullName: "Margaret Morgan",

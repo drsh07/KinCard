@@ -75,13 +75,24 @@ export function useGeminiRecorder(
       const data = (await response.json().catch(() => ({}))) as {
         text?: string;
         error?: string;
+        language?: string;
+        original?: string;
+        translated?: boolean;
       };
       if (!response.ok)
         throw new Error(data.error || "Gemini could not transcribe that. Please type instead.");
       if (!mounted.current) return;
-      if (data.text?.trim()) {
-        textHandler.current(data.text.trim());
-        setMessage("Transcribed by Gemini. Check and edit the text before sharing.");
+      // Accept { text: "..." } or an older nested { text: { text: "..." } } reply.
+      const nested = data.text as unknown as { text?: string; language?: string; original?: string; translated?: boolean } | string | undefined;
+      if (nested && typeof nested === "object") Object.assign(data, nested);
+      const spoken = typeof data.text === "string" ? data.text.trim() : "";
+      if (spoken) {
+        textHandler.current(spoken);
+        setMessage(
+          data.translated
+            ? `Gemini translated this from ${data.language} into English. Check it before sharing. You said: "${(data.original || "").slice(0, 300)}"`
+            : "Transcribed by Gemini. Check and edit the text before sharing.",
+        );
       } else setMessage("No speech was heard. Please try again or type instead.");
     } catch (error) {
       if (mounted.current)

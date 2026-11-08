@@ -36,6 +36,13 @@ import { blendNotice, blendSections } from "../../../lib/blend.ts";
 import { logEvents } from "../../../lib/events.ts";
 import { aiPrivacyScreen } from "../../../lib/privacy-ai.ts";
 import { transcribeAudio } from "../../../lib/transcribe.ts";
+import { sameOrigin } from "../../../lib/origin.ts";
+import { readSession } from "../../../lib/session.ts";
+import {
+  householdFor,
+  householdOfToken,
+  newQrToken,
+} from "../../../lib/household.ts";
 import type { CareEvent } from "../../../lib/events.ts";
 import {
   InputError,
@@ -80,26 +87,12 @@ async function getAuth0User(
   request: Request,
 ): Promise<{ sub: string; name?: string; email?: string; picture?: string } | null> {
   const cookies = parseCookies(request.headers);
-  const sessionCookie = cookies["kincard_session"];
-
-  if (sessionCookie && sessionCookie.trim() !== "") {
-    try {
-      const raw = Buffer.from(sessionCookie, "base64").toString("utf8");
-      const user = JSON.parse(raw);
-      if (user && user.sub) {
-        return {
-          sub: user.sub,
-          name: user.name || user.nickname || user.given_name || user.email,
-          email: user.email,
-          picture: user.picture,
-        };
-      }
-    } catch (e) {
-      console.error("Failed to parse session cookie:", e);
-    }
-  }
-
-  return null;
+  const env = bindings();
+  // Signed by app/auth/[auth0]/route.ts; an edited cookie is rejected.
+  return readSession(
+    cookies["kincard_session"],
+    env.AUTH0_SECRET || env.AUTH0_CLIENT_SECRET || "",
+  );
 }
 
 async function body(
@@ -178,11 +171,8 @@ async function handle(request: Request): Promise<Response> {
   const parts = route.split("/");
   const envVars = bindings();
 
-  if (request.method === "POST") {
-    const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin)
-      throw new InputError("Please use KinCard from its own browser tab.", 403);
-  }
+  if (request.method === "POST" && !sameOrigin(request))
+    throw new InputError("Please use KinCard from its own browser tab.", 403);
 
   // Auth0 Session Status Check
   if (request.method === "GET" && route === "auth/me") {
@@ -196,12 +186,14 @@ async function handle(request: Request): Promise<Response> {
     if (!user) {
       return json({ unauthenticated: true, profile: null, draft: null });
     }
-    return json(await loadState(user.sub));
+    return json(await loadState(await householdFor(user.sub)));
   }
 
   // Public Visitor QR Care View (Unauthenticated)
   if (parts[0] === "care") {
-    const state = await loadState("demo");
+    // The QR token says whose card this is.
+    const household = householdOfToken(parts[1] || "");
+    const state = await loadState(household);
     assertToken(state, parts[1] || "");
     if (request.method === "GET" && parts.length === 2)
       return json({
@@ -271,15 +263,19 @@ async function handle(request: Request): Promise<Response> {
             : state.suggestions,
         },
         state.revision,
-        "demo",
+        household,
       );
-      await logEvents(envVars, [
-        {
-          type: "visitor_note",
-          field: suggestion?.field ?? null,
-          note: note.text,
-        },
-      ]);
+      await logEvents(
+        envVars,
+        [
+          {
+            type: "visitor_note",
+            field: suggestion?.field ?? null,
+            note: note.text,
+          },
+        ],
+        household,
+      );
       return json(
         { note, suggestion, mode: result.mode, notice: result.notice },
         201,
@@ -292,12 +288,10 @@ async function handle(request: Request): Promise<Response> {
       parts[2] === "transcribe"
     ) {
       const input = await body(request, 6_000_000);
-      return json({
-        text: await transcribeAudio(input.audio, {
+      return json(await transcribeAudio(input.audio, {
           key: envVars.GEMINI_API_KEY,
           model: envVars.GEMINI_MODEL,
-        }),
-      });
+        }));
     }
     throw new InputError("This care-card action was not found.", 404);
   }
@@ -310,7 +304,8 @@ async function handle(request: Request): Promise<Response> {
       401,
     );
   }
-  const userId = user.sub;
+  // One private card per Auth0 account (hashed id; new accounts start empty).
+  const userId = await householdFor(user.sub);
 
   if (request.method === "GET" && route === "ai/status")
     return json({
@@ -337,22 +332,26 @@ async function handle(request: Request): Promise<Response> {
 
   if (request.method === "POST" && route === "transcribe") {
     const input = await body(request, 6_000_000);
-    return json({
-      text: await transcribeAudio(input.audio, {
+    return json(await transcribeAudio(input.audio, {
         key: envVars.GEMINI_API_KEY,
         model: envVars.GEMINI_MODEL,
-      }),
-    });
+      }));
   }
 
   if (request.method === "POST" && route === "privacy-review") {
     const input = await body(request);
     const current = await loadState(userId);
     const card = current.draft || current.profile;
+    // Names typed in the new-patient setup are the person's own: keep them.
+    const typed = (Array.isArray(input.keepNames) ? input.keepNames : [])
+      .filter((n): n is string => typeof n === "string")
+      .slice(0, 6)
+      .flatMap((n) => n.split(/\s+/))
+      .filter((n) => n.length > 1 && n.length < 40);
     return json(
       await aiPrivacyScreen(
         text(input.text, "Story", 12000, true),
-        [card?.preferredName || "", ...(card?.fullName || "").split(/\s+/)],
+        [card?.preferredName || "", ...(card?.fullName || "").split(/\s+/), ...typed],
         { key: envVars.GEMINI_API_KEY, model: envVars.GEMINI_MODEL },
       ),
     );
@@ -457,6 +456,7 @@ async function handle(request: Request): Promise<Response> {
             note: addedText(state.profile, saved.profile!, field) || undefined,
           }),
         ),
+      userId,
     );
     return json({ state: saved });
   }
@@ -464,7 +464,7 @@ async function handle(request: Request): Promise<Response> {
   if (route === "qr")
     return json({
       state: await saveState(
-        { ...state, qrToken: crypto.randomUUID() },
+        { ...state, qrToken: newQrToken(userId) },
         state.revision,
         userId,
       ),
@@ -505,7 +505,7 @@ async function handle(request: Request): Promise<Response> {
               note: decided.value,
             }
           : { type: "observation_rejected", field: decided.field },
-      ]);
+      ], userId);
     return json({ state: saved });
   }
 
