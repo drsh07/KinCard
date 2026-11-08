@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -25,6 +25,7 @@ import {
 import type { KinState, Profile, Suggestion } from "../../lib/domain";
 import {
   api,
+  ApiError,
   Avatar,
   CareSections,
   DemoNotice,
@@ -47,19 +48,43 @@ export default function KinCardApp() {
     [busy, setBusy] = useState(false),
     [toast, setToast] = useState(""),
     [help, setHelp] = useState(false),
-    [editProfile, setEditProfile] = useState<Profile | null>(null);
+    [editProfile, setEditProfile] = useState<Profile | null>(null),
+    [editRevision, setEditRevision] = useState<number | null>(null);
+  const refreshRequest = useRef(0);
+  const refreshController = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => {
+    const request = ++refreshRequest.current;
+    refreshController.current?.abort();
+    const abort = new AbortController();
+    refreshController.current = abort;
     try {
-      const data = await api("/api/state");
-      setState(data);
-    } catch {
-      setState(null);
+      const data = await api("/api/state", undefined, abort.signal);
+      if (refreshRequest.current === request && !abort.signal.aborted) {
+        setState(data);
+        setError("");
+      }
+    } catch (e) {
+      if (refreshRequest.current === request && !abort.signal.aborted) {
+        if (e instanceof ApiError && e.status === 401) {
+          setState(null);
+          setError("");
+          setEditProfile(null);
+          setEditRevision(null);
+        } else setError((e as Error).message);
+      }
     } finally {
-      setLoading(false);
+      if (refreshRequest.current === request) {
+        setLoading(false);
+        refreshController.current = null;
+      }
     }
   }, []);
   useEffect(() => {
     refresh();
+    return () => {
+      refreshRequest.current++;
+      refreshController.current?.abort();
+    };
   }, [refresh]);
   useEffect(() => {
     if (!toast) return;
@@ -86,8 +111,10 @@ export default function KinCardApp() {
   function navigate(next: View) {
     setError("");
     setView(next);
-    if (next === "profile")
+    if (next === "profile") {
       setEditProfile(state?.draft || state?.profile || null);
+      setEditRevision(state?.revision ?? null);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   if (loading)
@@ -96,6 +123,17 @@ export default function KinCardApp() {
         <Logo />
         <span className="spinner" />
         <p>Making room for familiar moments…</p>
+      </main>
+    );
+  if (!state && error)
+    return (
+      <main className="loading-screen">
+        <Logo />
+        <p role="alert">{error}</p>
+        <button className="button secondary" onClick={refresh}>
+          <RefreshCw size={16} />
+          Try again
+        </button>
       </main>
     );
   if (!state) return <Login onLogin={refresh} />;
@@ -175,6 +213,7 @@ export default function KinCardApp() {
                   setState(null);
                   setView("overview");
                   setEditProfile(null);
+                  setEditRevision(null);
                 })
               }
             >
@@ -209,6 +248,7 @@ export default function KinCardApp() {
                 setState(null);
                 setView("overview");
                 setEditProfile(null);
+                setEditRevision(null);
               })
             }
           >
@@ -486,8 +526,9 @@ export default function KinCardApp() {
               busy={busy}
               act={act}
               onState={setState}
-              onGenerated={(p) => {
+              onGenerated={(p, revision) => {
                 setEditProfile(p);
+                setEditRevision(revision);
                 setView("profile");
               }}
             />
@@ -499,14 +540,20 @@ export default function KinCardApp() {
               busy={busy}
               onChange={setEditProfile}
               onStart={() => navigate("interview")}
+              stale={editRevision !== null && editRevision !== state.revision}
+              onReload={() => {
+                setEditProfile(state.draft || state.profile);
+                setEditRevision(state.revision);
+              }}
               onApprove={(p) =>
                 act(async () => {
                   const data = await api("/api/approve-profile", {
                     profile: p,
-                    revision: state.revision,
+                    revision: editRevision ?? state.revision,
                   });
                   setState(data.state);
                   setEditProfile(data.state.profile);
+                  setEditRevision(data.state.revision);
                   setToast(
                     "Family approved. The shared care card has been updated.",
                   );
@@ -661,11 +708,14 @@ export default function KinCardApp() {
                 answers.
               </li>
               <li>
-                Edit your story or transcript, let Gemini organize a draft, then
-                review and approve the profile.
+                Select <strong>Review privacy</strong>, edit and confirm the
+                screened text, then let Gemini organize a draft. Review and
+                approve the profile before sharing it.
               </li>
               <li>
                 Open <strong>QR sharing</strong> to try the caregiver view.
+                Choose a language and select <strong>Translate card</strong> to
+                translate the card with Gemini.
               </li>
               <li>
                 Leave a visit note, then return here to approve or reject a

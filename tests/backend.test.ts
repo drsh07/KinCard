@@ -9,6 +9,7 @@ import {
 } from "../lib/ai.ts";
 import { approveProfile, decideSuggestion } from "../lib/transitions.ts";
 import {
+  InputError,
   hasTreatmentDirection,
   parseAnswers,
   parseProfile,
@@ -113,7 +114,7 @@ test("absent API key makes no network call and explicitly selects mock mode", as
   assert.equal(result.mode, "mock");
   assert.match(result.notice, /No Gemini request/);
 });
-test("Gemini failure or malformed schema falls back to original answers", async () => {
+test("configured Gemini failures are explicit errors rather than mock generation", async () => {
   const answers = { ...emptyAnswers(), preferredName: "Jo" };
   for (const fetcher of [
     async () => new Response("denied", { status: 401 }),
@@ -122,13 +123,14 @@ test("Gemini failure or malformed schema falls back to original answers", async 
         candidates: [{ content: { parts: [{ text: "not JSON" }] } }],
       }),
   ]) {
-    const result = await generateProfile(answers, {
-      key: "fictional-test-key",
-      fetcher: fetcher as typeof fetch,
-    });
-    assert.equal(result.mode, "mock");
-    assert.equal(result.profile.preferredName, "Jo");
-    assert.match(result.notice, /fallback/);
+    await assert.rejects(
+      () =>
+        generateProfile(answers, {
+          key: "fictional-test-key",
+          fetcher: fetcher as typeof fetch,
+        }),
+      InputError,
+    );
   }
 });
 test("valid Gemini extraction is used; key appears only in request header", async () => {
@@ -169,29 +171,34 @@ test("notes produce grounded suggestions and withhold unsafe notes", async () =>
   const unsafe = await generateSuggestion("Give aspirin every morning.", {});
   assert.equal(unsafe.value, "");
 });
-test("shortened Gemini visit notes fall back to full contextual observation", async () => {
+test("shortened Gemini visit notes fail validation without a mock suggestion", async () => {
   const note =
     "Music did not calm Jo today. Maybe a quiet room helped instead.";
-  const result = await generateSuggestion(note, {
-    key: "fictional-test-key",
-    fetcher: (async () =>
-      Response.json({
-        candidates: [
-          {
-            finishReason: "STOP",
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify({ field: "comfort", value: "calm Jo" }),
+  await assert.rejects(
+    () =>
+      generateSuggestion(note, {
+        key: "fictional-test-key",
+        fetcher: (async () =>
+          Response.json({
+            candidates: [
+              {
+                finishReason: "STOP",
+                content: {
+                  parts: [
+                    {
+                      text: JSON.stringify({
+                        field: "comfort",
+                        value: "calm Jo",
+                      }),
+                    },
+                  ],
                 },
-              ],
-            },
-          },
-        ],
-      })) as typeof fetch,
-  });
-  assert.equal(result.mode, "mock");
-  assert.equal(result.value, note);
+              },
+            ],
+          })) as typeof fetch,
+      }),
+    InputError,
+  );
 });
 test("reject does not change approved card; approve appends once only", () => {
   const state = seedState();

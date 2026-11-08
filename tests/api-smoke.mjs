@@ -59,8 +59,49 @@ try {
     "suggestions",
     "relationship",
     "terms",
+    "story",
   ])
     assert.equal(hidden in care, false);
+  // Neither an unchecked confirmation nor a forged checked flag may send
+  // detectable raw identifiers to the provider or persist them.
+  const unreviewed = {
+    story: "We call her Jo. She enjoys garden photos.",
+    relationship: "Grandchild",
+    terms: false,
+    revision: state.revision,
+  };
+  await request("interview", unreviewed, 400);
+  await request("generate", unreviewed, 400);
+  const secretPhone = "604-555-0199";
+  const stillSensitive = {
+    ...unreviewed,
+    story: `We call her Jo. Her phone number is ${secretPhone}.`,
+    privacyReviewed: true,
+  };
+  for (const endpoint of ["interview", "generate"]) {
+    const blocked = await request(endpoint, stillSensitive, 400);
+    assert.ok(
+      !JSON.stringify(blocked).includes(secretPhone),
+      "Privacy errors must not echo a detected identifier.",
+    );
+  }
+  state = (
+    await request("interview", {
+      ...unreviewed,
+      story: "We call her Jo. She enjoys garden photos. [removed].",
+      privacyReviewed: true,
+    })
+  ).state;
+  assert.equal(
+    state.story,
+    "We call her Jo. She enjoys garden photos. [removed].",
+  );
+  assert.equal(state.draft, null);
+  assert.deepEqual(
+    (await request(`care/${state.qrToken}`, undefined, 200, false)).profile,
+    initial.profile,
+  );
+
   const answers = {
     fullName: "Jordan Sample",
     preferredName: "Jo",
@@ -75,6 +116,7 @@ try {
   };
   let result = await request("generate", {
     answers,
+    privacyReviewed: true,
     relationship: "Grandchild",
     terms: false,
     revision: state.revision,
@@ -115,6 +157,73 @@ try {
       .preferredName,
     "Jo",
   );
+  // Translation may read approved text only and must never mutate the card.
+  const approvedBeforeTranslation = await request(
+    `care/${state.qrToken}`,
+    undefined,
+    200,
+    false,
+  );
+  await request(
+    `care/${state.qrToken}/translate`,
+    { language: "not-a-language", revision: state.revision },
+    400,
+    false,
+  );
+  await request(
+    `care/${state.qrToken}/translate`,
+    { language: "es", revision: state.revision - 1 },
+    409,
+    false,
+  );
+  await request(
+    "care/retired-fictional-token/translate",
+    { language: "es", revision: state.revision },
+    404,
+    false,
+  );
+  await request(
+    `care/${state.qrToken}/translate`,
+    {
+      language: "es",
+      revision: state.revision,
+      profile: { extra: "Do not accept caller-provided profile text." },
+    },
+    400,
+    false,
+  );
+  const originalTranslation = await request(
+    `care/${state.qrToken}/translate`,
+    { language: "en", revision: state.revision },
+    200,
+    false,
+  );
+  assert.equal(originalTranslation.language, "en");
+  assert.deepEqual(
+    originalTranslation.profile,
+    approvedBeforeTranslation.profile,
+  );
+  assert.ok(originalTranslation.labels.conversation);
+  assert.ok(originalTranslation.copy.observationQuestion);
+  const noKeyTranslation = await request(
+    `care/${state.qrToken}/translate`,
+    { language: "es", revision: state.revision },
+    503,
+    false,
+  );
+  assert.match(
+    noKeyTranslation.error,
+    /API key/,
+    "Run this smoke test with Gemini unconfigured; it must not call a live provider.",
+  );
+  const unchangedAfterTranslation = await request(
+    `care/${state.qrToken}`,
+    undefined,
+    200,
+    false,
+  );
+  assert.deepEqual(unchangedAfterTranslation, approvedBeforeTranslation);
+
   const first = await request(
     `care/${state.qrToken}/notes`,
     {
@@ -158,6 +267,34 @@ try {
     { decision: "approved", revision: state.revision },
     409,
   );
+  const privateNote = await request(
+    `care/${state.qrToken}/notes`,
+    {
+      author: "Alex alex@example.com",
+      text: "Jo enjoyed garden photos today. Call 604-555-0199 for more details.",
+    },
+    201,
+    false,
+  );
+  assert.ok(!JSON.stringify(privateNote).includes("604-555-0199"));
+  assert.ok(!JSON.stringify(privateNote).includes("alex@example.com"));
+  assert.match(privateNote.note.text, /\[removed\]/);
+  state = await request("state");
+  const savedPrivateNote = state.notes.find(
+    (note) => note.id === privateNote.note.id,
+  );
+  assert.ok(
+    savedPrivateNote &&
+      !JSON.stringify(savedPrivateNote).includes("604-555-0199"),
+  );
+  if (privateNote.suggestion)
+    state = (
+      await request(`suggestions/${privateNote.suggestion.id}`, {
+        decision: "rejected",
+        revision: state.revision,
+      })
+    ).state;
+
   const unsafe = await request(
     `care/${state.qrToken}/notes`,
     {
@@ -194,7 +331,10 @@ try {
       })
     ).state;
   await request("interview", {
-    answers: initial.answers,
+    ...(initial.story === undefined
+      ? { answers: initial.answers }
+      : { story: initial.story }),
+    privacyReviewed: true,
     relationship: initial.relationship,
     terms: initial.terms,
     revision: state.revision,
@@ -204,5 +344,5 @@ await request("logout", {});
 cookie = "";
 await request("state", undefined, 401);
 console.log(
-  `Passed ${passed} local API checks: auth, draft isolation, validation, extraction fallback, visit review, QR rotation, and logout.`,
+  `Passed ${passed} local API checks: auth, draft isolation, validation, reviewed privacy boundaries, extraction fallback, note redaction, translation validation/no-key behaviour, visit review, QR rotation, and logout.`,
 );

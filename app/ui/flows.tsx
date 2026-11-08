@@ -278,6 +278,8 @@ export function ProfileEditor({
   onChange,
   onStart,
   onApprove,
+  stale = false,
+  onReload,
 }: {
   profile: Profile | null;
   state: KinState;
@@ -285,6 +287,8 @@ export function ProfileEditor({
   onChange: (p: Profile) => void;
   onStart: () => void;
   onApprove: (p: Profile) => void;
+  stale?: boolean;
+  onReload?: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   useEffect(() => setConfirmed(false), [profile]);
@@ -320,6 +324,17 @@ export function ProfileEditor({
         <Sparkles size={20} />
         <p>{state.aiNotice}</p>
       </div>
+      {stale && (
+        <div className="callout profile-stale" role="alert">
+          <p>
+            The demo changed while you were editing. Reload the latest profile
+            before approving. Reloading replaces the edits shown here.
+          </p>
+          <button className="button secondary" type="button" onClick={onReload}>
+            Reload latest profile
+          </button>
+        </div>
+      )}
       {state.story && (
         <details className="panel source-story">
           <summary>Compare with your original story</summary>
@@ -401,7 +416,9 @@ export function ProfileEditor({
           </label>
           <button
             className="button"
-            disabled={busy || !confirmed || !profile.preferredName.trim()}
+            disabled={
+              busy || stale || !confirmed || !profile.preferredName.trim()
+            }
             onClick={() => onApprove(profile)}
           >
             {busy ? (

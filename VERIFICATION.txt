@@ -1,0 +1,15 @@
+KinCard API-ready update — verification
+
+63 automated checks passed, including real API handlers with test-only Cloudflare/D1 bindings and mocked Gemini responses.
+Configured Gemini success flow: story -> structured draft -> explicit family approval -> QR card -> visit note -> suggested update -> approve/reject -> translated view.
+Configured failure flow: invalid credentials, quota, timeout, invalid JSON/schema, truncated responses; approved profile and failed-note state remain unchanged. No mock success is returned on a configured-key failure.
+48 end-to-end local API checks passed against the production build.
+TypeScript check and production build passed.
+Built launcher verified to load root .env.local at runtime using a fictional test key, without calling Google. That test value was absent from all production build files.
+Mobile browser verified configuration status, privacy review, local preview generation, profile approval, publishing, and no horizontal overflow at 390px.
+No real Gemini key or live Google completion was used. Model output validation and API responses were tested with fictional/mock data. The connection-check button can verify your own key after you add it locally.
+
+The downloadable .env.local is deliberately blank. Add your key only there, restart, then use Check Gemini connection in Family speaks. To publish a new card, generate a draft from reviewed story text and approve it.
+
+Demo credentials: family / KinCard2026!
+Use fictional information only; the privacy helper does not establish legal compliance or production health-data security.

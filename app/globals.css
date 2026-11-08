@@ -3305,3 +3305,58 @@ button:active:not(:disabled) {
     display: none;
   }
 }
+
+/* Pre-disclosure review: raw text never needs to leave the form to run this check. */
+.privacy-review-button { margin-top: 22px; }
+.privacy-review { margin-top: 24px; padding: 24px; background: #fffdf5; border: 1px solid #dfdfca; border-radius: 13px; scroll-margin-top: 24px; }
+.privacy-review > h3 { font-family: var(--serif); font-size: 25px; font-weight: 400; margin-bottom: 11px; }
+.privacy-findings { list-style: none; padding: 0; margin: 19px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.privacy-findings li { border: 1px solid #dedac7; border-radius: 20px; padding: 7px 11px; font-size: 10px; color: #8a7759; background: #f4efdf; }
+.privacy-findings li span { display: inline-block; margin-inline-start: 6px; font-weight: 600; }
+.privacy-review textarea { font-size: 14px; line-height: 1.85; }
+.privacy-limits { color: #8e8068; font-size: 11px; line-height: 1.9; margin-top: 17px; }
+.privacy-review .checkbox-label { margin-top: 20px; font-size: 11px; }
+.translation-panel { background: #fffdf6; padding: 22px 24px; margin-bottom: 24px; }
+.translation-panel h2 { display: flex; gap: 10px; align-items: center; font-size: 24px; margin-bottom: 11px; }
+.translation-panel > p { font-size: 12px; color: var(--muted); }
+.translation-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 15px; }
+.translation-controls > div { flex: 1; min-width: 150px; }
+.translation-controls select { min-width: 150px; }
+.translation-controls label { margin-top: 0; font-size: 11px; }
+.translation-controls .button { font-size: 11px; }
+.translation-status { margin-top: 15px; font-size: 11px; color: #7a8669; line-height: 1.8; }
+.translation-warning { margin-top: 14px; padding: 12px; border-radius: 9px; background: #f8eddc; color: #987448; font-size: 11px; line-height: 1.8; }
+.translated-label { display: inline-flex; align-items: center; gap: 7px; color: #8f7959; font-size: 10px; margin-top: 12px; }
+.care-page[dir="rtl"] .care-section { text-align: right; }
+.care-page[dir="rtl"] .note-panel { text-align: right; }
+@media(max-width:700px) {
+  .privacy-review { padding: 20px 16px; }
+  .privacy-review textarea { font-size: 16px; }
+  .translation-panel { padding: 22px; }
+  .translation-controls { align-items: stretch; }
+  .translation-controls > div { flex-basis: 100%; }
+  .translation-controls .button { flex: 1; }
+}
+@media print { .translation-controls, .privacy-review-button { display: none; } }
+
+/* Gemini configuration and connection feedback */
+.gemini-status { padding: 26px 30px; margin-bottom: 24px; }
+.gemini-status-heading { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; }
+.gemini-status-heading > svg { flex-shrink: 0; color: var(--terra); }
+.gemini-status-heading > div { flex: 1; }
+.gemini-status h2 { font-family: var(--serif); font-size: 25px; font-weight: 400; margin-bottom: 6px; }
+.gemini-status-heading p { font-size: 12px; color: var(--muted); line-height: 1.6; }
+.gemini-status > p { font-size: 12px; line-height: 1.9; margin: 13px 0; }
+.gemini-status code { background: #f1ece2; color: #705744; padding: 2px 5px; border-radius: 4px; }
+.gemini-status .button-row { flex-wrap: wrap; margin: 17px 0; }
+.gemini-status .button { font-size: 11px; }
+.gemini-status .gemini-verified, .gemini-status .gemini-result { color: #64805b; }
+.gemini-status .gemini-result { background: #eff3e9; border-radius: 8px; padding: 12px; }
+.profile-stale { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; margin-bottom: 20px; }
+.profile-stale p { flex: 1; min-width: 180px; }
+.note-result-notice { background: #f4f1e7; padding: 12px; border-radius: 8px; font-size: 12px; line-height: 1.9; }
+@media (max-width: 600px) {
+  .gemini-status { padding: 22px; }
+  .gemini-status .button-row { align-items: stretch; }
+  .gemini-status .button-row .button { flex: 1; min-width: 120px; }
+}

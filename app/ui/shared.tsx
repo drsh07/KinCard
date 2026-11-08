@@ -18,6 +18,7 @@ import type {
   VisitNote,
 } from "../../lib/domain";
 import { FIELD_LABELS } from "../../lib/domain";
+import type { CareTranslation } from "../../lib/care-language";
 export function Logo() {
   return (
     <span className="logo">
@@ -78,9 +79,15 @@ const icons = {
 export function CareSections({
   profile,
   compact = false,
+  labels = FIELD_LABELS,
+  emptyText = "Not shared yet.",
+  healthNotice = "Family-reported · Not clinically verified. This is not a treatment plan.",
 }: {
   profile: Profile;
   compact?: boolean;
+  labels?: Record<ProfileField, string>;
+  emptyText?: string;
+  healthNotice?: string;
 }) {
   const fields: (keyof typeof icons)[] = compact
     ? ["conversation", "comfort", "avoid"]
@@ -106,14 +113,9 @@ export function CareSections({
               <Icon size={19} />
             </div>
             <div>
-              <h3>{FIELD_LABELS[field]}</h3>
-              <p>{profile[field] || "Not shared yet."}</p>
-              {field === "health" && !compact && (
-                <small>
-                  Family-reported · Not clinically verified. This is not a
-                  treatment plan.
-                </small>
-              )}
+              <h3>{labels[field]}</h3>
+              <p>{profile[field] || emptyText}</p>
+              {field === "health" && !compact && <small>{healthNotice}</small>}
             </div>
           </section>
         );
@@ -146,7 +148,47 @@ type NoteResponse = {
   mode: AiMode;
   notice: string;
 };
-export function api(path: "/api/state"): Promise<KinState>;
+export type AiStatus = {
+  configured: boolean;
+  model: string;
+  mode: "gemini" | "mock";
+  issue?: string;
+};
+export type AiCheck = {
+  ok: true;
+  mode: "gemini";
+  model: string;
+  notice: string;
+};
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+export function api(
+  path: "/api/ai/status",
+  body?: undefined,
+  signal?: AbortSignal,
+): Promise<AiStatus>;
+export function api(
+  path: "/api/ai/check",
+  body: Record<string, never>,
+  signal?: AbortSignal,
+): Promise<AiCheck>;
+export function api(
+  path: `/api/care/${string}/translate`,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<CareTranslation>;
+export function api(
+  path: "/api/state",
+  body?: undefined,
+  signal?: AbortSignal,
+): Promise<KinState>;
 export function api(path: `/api/care/${string}`): Promise<CareResponse>;
 export function api(
   path: "/api/generate",
@@ -155,25 +197,45 @@ export function api(
 export function api(
   path: `/api/care/${string}/notes`,
   body: unknown,
+  signal?: AbortSignal,
 ): Promise<NoteResponse>;
 export function api(
   path: "/api/login" | "/api/logout",
   body: unknown,
 ): Promise<{ ok: boolean; demoOnly?: boolean }>;
 export function api(path: string, body: unknown): Promise<StateResponse>;
-export async function api(path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers:
-      body === undefined ? undefined : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    cache: "no-store",
-  });
-  const data: unknown = await response
-    .json()
-    .catch(() => ({
-      error: "Please try again. The server did not return a response.",
-    }));
+export async function api(
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: body === undefined ? "GET" : "POST",
+      headers:
+        body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError(
+      "KinCard could not be reached. Keep the app’s server running, then try again.",
+      0,
+    );
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError(
+      "KinCard did not return a readable response. Please try again.",
+      response.ok ? 502 : response.status,
+    );
+  }
   if (!response.ok) {
     const message =
       data &&
@@ -182,7 +244,7 @@ export async function api(path: string, body?: unknown): Promise<unknown> {
       typeof data.error === "string"
         ? data.error
         : "Something went wrong. Please try again.";
-    throw new Error(message);
+    throw new ApiError(message, response.status);
   }
   return data;
 }

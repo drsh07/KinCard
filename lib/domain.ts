@@ -117,7 +117,7 @@ export function seedState(): KinState {
     qrToken: crypto.randomUUID(),
     aiMode: "mock",
     aiNotice:
-      "Fictional sample profile. Local demo mode; Gemini is not configured.",
+      "Preloaded fictional sample. Generate your own draft in Family speaks, where you can also check the current Gemini connection.",
     updatedAt: now,
     profileUpdatedAt: now,
   };

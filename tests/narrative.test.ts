@@ -8,11 +8,12 @@ import {
   parseStory,
   storyUnits,
 } from "../lib/narrative.ts";
+import { InputError } from "../lib/validation.ts";
 
 function output(
   fields: Record<
     string,
-    { value: string; evidence: string[]; uncertain?: boolean }
+    { value: string; evidence: Array<string | number>; uncertain?: boolean }
   > = {},
 ) {
   return Object.fromEntries(
@@ -103,6 +104,36 @@ test("Gemini can interpret and paraphrase source-backed text into card fields", 
   assert.equal(result.profile.conversation, "Ask about her garden.");
   assert.equal(result.profile.comfort, "");
   assert.equal(result.profile.routine, "");
+});
+
+test("compact Gemini evidence indices resolve complete source units and reject invalid indices", () => {
+  const story =
+    "Please call her Jo. She worked as a librarian. Loud TV does not help her feel calm.";
+  const indexed = output();
+  indexed.preferredName = { value: "Jo", evidence: [0], uncertain: false };
+  indexed.biography = {
+    value: "She worked as a librarian.",
+    evidence: [1],
+    uncertain: false,
+  };
+  const profile = interpretNarrative(indexed, story);
+  assert.equal(profile.preferredName, "Jo");
+  assert.equal(profile.biography, "She worked as a librarian.");
+  for (const invalid of [-1, 3, 1.5]) {
+    const candidate = structuredClone(indexed);
+    candidate.biography.evidence = [invalid];
+    assert.throws(() => interpretNarrative(candidate, story), /evidence index/);
+  }
+  indexed.comfort = {
+    value: "TV helps her feel calm.",
+    evidence: [2],
+    uncertain: false,
+  };
+  assert.equal(
+    interpretNarrative(indexed, story).comfort,
+    "",
+    "Compact references cannot strip source negation",
+  );
 });
 
 test("unsupported or shortened evidence cannot support an invented interpretation", () => {
@@ -228,19 +259,19 @@ test("absent key never calls Gemini and honestly labels limited local interpreta
   assert.match(result.profile.uncertainties.join(" "), /no explicit name/);
 });
 
-test("invalid schema and failed Gemini use useful conservative fallback", async () => {
+test("invalid schema and failed Gemini cannot look like successful generated cards", async () => {
   for (const fetcher of [
     response({ biography: "bad schema" }),
     (async () => new Response("unavailable", { status: 500 })) as typeof fetch,
   ]) {
-    const result = await generateNarrative(
-      "We call her Jo. She loves garden photographs.",
-      { key: "fictional-key", fetcher },
+    await assert.rejects(
+      () =>
+        generateNarrative("We call her Jo. She loves garden photographs.", {
+          key: "fictional-key",
+          fetcher,
+        }),
+      InputError,
     );
-    assert.equal(result.mode, "mock");
-    assert.equal(result.profile.preferredName, "Jo");
-    assert.match(result.profile.conversation, /garden photographs/);
-    assert.match(result.notice, /fallback/);
   }
 });
 

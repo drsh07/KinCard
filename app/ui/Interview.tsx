@@ -10,26 +10,15 @@ import {
   Sparkles,
   Sprout,
   Users,
+  ShieldCheck,
 } from "lucide-react";
 import type { KinState, Profile } from "../../lib/domain";
 import { storyFromAnswers } from "../../lib/domain";
 import { api } from "./shared";
-
-type SpeechEngine = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-  onresult:
-    | ((event: {
-        results: ArrayLike<ArrayLike<{ transcript: string }>>;
-      }) => void)
-    | null;
-  onerror: ((event: { error: string }) => void) | null;
-  onend: (() => void) | null;
-};
+import { GeminiStatus } from "./GeminiStatus";
+import { screenText } from "../../lib/privacy";
+import { createLocalSpeech } from "../../lib/local-speech";
+import type { SpeechEngine } from "../../lib/local-speech";
 
 const questions = [
   "What should we call them?",
@@ -64,13 +53,22 @@ export function Interview({
   busy: boolean;
   act: (task: () => Promise<void>) => Promise<void>;
   onState: (state: KinState) => void;
-  onGenerated: (profile: Profile) => void;
+  onGenerated: (profile: Profile, revision: number) => void;
 }) {
   const [story, setStory] = useState(() => savedStory(state));
   const [relationship, setRelationship] = useState(state.relationship);
   const [terms, setTerms] = useState(state.terms);
   const [recording, setRecording] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [preparingSpeech, setPreparingSpeech] = useState(false);
+  const [privacyDraft, setPrivacyDraft] = useState<string | null>(null);
+  const [privacySource, setPrivacySource] = useState<string | null>(null);
+  const [privacyConfirmed, setPrivacyConfirmed] = useState(false);
+  const [privacyFindings, setPrivacyFindings] = useState<
+    ReturnType<typeof screenText>["findings"]
+  >([]);
+  const [privacyError, setPrivacyError] = useState("");
+  const mounted = useRef(true);
   const [speechStatus, setSpeechStatus] = useState(
     "Speak freely or type below. Your whole story stays editable.",
   );
@@ -82,23 +80,30 @@ export function Interview({
   const storyRef = useRef(story);
   const dirty = snapshot(story, relationship, terms) !== savedSnapshot;
   const stale = revision.current !== state.revision;
-  const locked = busy || recording;
+  const locked = busy || recording || preparingSpeech;
+  const privacyReady =
+    privacyDraft !== null && privacyConfirmed && privacySource === story;
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       const engine = speech.current;
       speech.current = null;
       if (engine) {
         engine.onresult = engine.onerror = engine.onend = null;
         engine.abort();
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   function updateStory(value: string) {
     storyRef.current = value;
     setStory(value);
+    setPrivacyDraft(null);
+    setPrivacySource(null);
+    setPrivacyConfirmed(false);
+    setPrivacyError("");
   }
   function loadSavedStory() {
     updateStory(savedStory(state));
@@ -110,86 +115,137 @@ export function Interview({
     );
     setSpeechStatus("Saved story loaded. You can type or speak to add to it.");
   }
+  function reviewPrivacy() {
+    const reviewed = screenText(storyRef.current);
+    setPrivacyDraft(reviewed.text);
+    setPrivacyFindings(reviewed.findings);
+    setPrivacySource(storyRef.current);
+    setPrivacyConfirmed(false);
+    setPrivacyError("");
+    requestAnimationFrame(() =>
+      document
+        .getElementById("privacy-review")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  }
+  function confirmPrivacy(checked: boolean) {
+    if (!checked || privacyDraft === null) {
+      setPrivacyConfirmed(false);
+      return;
+    }
+    const reviewed = screenText(privacyDraft);
+    if (reviewed.changed) {
+      setPrivacyDraft(reviewed.text);
+      setPrivacyFindings(reviewed.findings);
+      setPrivacyError(
+        "Additional identifiers were removed from your edits. Review the revised text and confirm again.",
+      );
+      setPrivacyConfirmed(false);
+      return;
+    }
+    setPrivacyError("");
+    setPrivacyConfirmed(true);
+  }
   async function save() {
+    if (!privacyReady || privacyDraft === null)
+      throw new Error(
+        "Review the screened text before saving or sending it to Gemini.",
+      );
+    const finalCheck = screenText(privacyDraft);
+    if (finalCheck.changed)
+      throw new Error("Please check the privacy review again before sharing.");
     const data = await api("/api/interview", {
-      story: storyRef.current,
+      story: finalCheck.text,
       relationship,
       terms,
       revision: revision.current,
+      privacyReviewed: true,
     });
     revision.current = data.state.revision;
     const nextStory = savedStory(data.state);
     updateStory(nextStory);
+    setPrivacyDraft(nextStory);
+    setPrivacySource(nextStory);
+    setPrivacyConfirmed(true);
     setSavedSnapshot(
       snapshot(nextStory, data.state.relationship, data.state.terms),
     );
     onState(data.state);
     return data.state;
   }
-  function dictate() {
+  async function dictate() {
     if (speech.current) {
       speech.current.stop();
       return;
     }
-    const browser = window as unknown as {
-      SpeechRecognition?: new () => SpeechEngine;
-      webkitSpeechRecognition?: new () => SpeechEngine;
-    };
-    const Speech = browser.SpeechRecognition || browser.webkitSpeechRecognition;
-    if (!Speech) {
-      setSpeechStatus(
-        "Voice-to-text is unavailable in this browser. Type your story below, or use a supported browser such as Chrome.",
-      );
-      document.getElementById("family-story")?.focus();
-      return;
-    }
-    const engine = new Speech();
-    speech.current = engine;
-    engine.continuous = true;
-    engine.interimResults = true;
-    engine.lang = "en-US";
-    const base = storyRef.current;
-    engine.onresult = (event) => {
-      if (speech.current !== engine) return;
-      const spoken = Array.from(event.results)
-        .map((result) => result[0].transcript)
-        .join(" ");
-      const combined = `${base}${base ? "\n\n" : ""}${spoken}`;
-      updateStory(combined.slice(0, MAX_STORY));
-      if (combined.length >= MAX_STORY) engine.stop();
-    };
-    engine.onerror = (event) => {
-      if (speech.current !== engine) return;
-      speech.current = null;
-      setRecording(false);
-      setSpeechStatus(
-        event.error === "not-allowed"
-          ? "Microphone access was not granted. You can type your story below."
-          : "Voice-to-text stopped. Your transcript is still here; edit it or try again.",
-      );
-      engine.onresult = engine.onerror = engine.onend = null;
-      engine.abort();
-    };
-    engine.onend = () => {
-      if (speech.current !== engine) return;
-      speech.current = null;
-      setRecording(false);
-      setSpeechStatus(
-        "Recording finished. Check and edit your transcript below before creating the card.",
-      );
-    };
+    if (preparingSpeech) return;
+    setPreparingSpeech(true);
     try {
+      const engine = await createLocalSpeech();
+      if (!mounted.current) {
+        engine.abort();
+        return;
+      }
+      speech.current = engine;
+      const base = storyRef.current;
+      engine.onresult = (event) => {
+        if (speech.current !== engine) return;
+        const spoken = Array.from(event.results)
+          .map((result) => result[0].transcript)
+          .join(" ");
+        const combined = `${base}${base ? "\n\n" : ""}${spoken}`;
+        updateStory(combined.slice(0, MAX_STORY));
+        if (combined.length >= MAX_STORY) engine.stop();
+      };
+      engine.onerror = (event) => {
+        if (speech.current !== engine) return;
+        speech.current = null;
+        setRecording(false);
+        setSpeechStatus(
+          event.error === "not-allowed"
+            ? "Microphone access was not granted. You can type your story below."
+            : "On-device speech stopped. No cloud fallback was used. Edit the text or type your story.",
+        );
+        engine.onresult = engine.onerror = engine.onend = null;
+        engine.abort();
+      };
+      engine.onend = () => {
+        if (speech.current !== engine) return;
+        speech.current = null;
+        setRecording(false);
+        setSpeechStatus(
+          "Recording finished. Edit the transcript, then select Review privacy before sharing.",
+        );
+      };
       setRecording(true);
       setSpeechStatus(
-        "Listening… Tell their story naturally, in any order. Select Stop when you’re done.",
+        "Listening on your device… Select Stop when you’re done, then review privacy.",
       );
       engine.start();
-    } catch {
+    } catch (error) {
+      const failedEngine = speech.current;
       speech.current = null;
-      setRecording(false);
-      setSpeechStatus(
-        "Microphone could not start. You can type your story below.",
-      );
+      if (failedEngine) {
+        failedEngine.onresult =
+          failedEngine.onerror =
+          failedEngine.onend =
+            null;
+        try {
+          failedEngine.abort();
+        } catch {
+          /* A failed start may already be stopped. */
+        }
+      }
+      if (mounted.current) {
+        setRecording(false);
+        setSpeechStatus(
+          error instanceof Error
+            ? error.message
+            : "On-device speech is unavailable. Please type your story.",
+        );
+      }
+    } finally {
+      if (mounted.current) setPreparingSpeech(false);
     }
   }
 
@@ -208,22 +264,31 @@ export function Interview({
           <Heart size={13} /> The person behind the care
         </span>
       </div>
+      <GeminiStatus />
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (locked || stale || !relationship || !story.trim()) return;
+          if (
+            locked ||
+            stale ||
+            !relationship ||
+            !story.trim() ||
+            !privacyReady
+          )
+            return;
           act(async () => {
             setGenerating(true);
             try {
               const saved = await save();
               const data = await api("/api/generate", {
                 story: saved.story,
+                privacyReviewed: true,
                 relationship: saved.relationship,
                 terms: saved.terms,
                 revision: saved.revision,
               });
               onState(data.state);
-              onGenerated(data.profile);
+              onGenerated(data.profile, data.state.revision);
               window.scrollTo({ top: 0, behavior: "smooth" });
             } finally {
               setGenerating(false);
@@ -334,12 +399,16 @@ export function Interview({
                     : "button voice-button secondary"
                 }
                 type="button"
-                disabled={busy}
+                disabled={busy || preparingSpeech}
                 aria-pressed={recording}
                 onClick={dictate}
               >
                 {recording ? <MicOff size={19} /> : <Mic size={19} />}
-                {recording ? "Stop recording" : "Tell their story aloud"}
+                {preparingSpeech
+                  ? "Checking on-device speech…"
+                  : recording
+                    ? "Stop recording"
+                    : "Tell their story aloud"}
               </button>
               <p role="status">{speechStatus}</p>
             </div>
@@ -348,7 +417,7 @@ export function Interview({
               id="family-story"
               value={story}
               required
-              readOnly={recording}
+              readOnly={recording || preparingSpeech}
               disabled={busy}
               rows={16}
               maxLength={MAX_STORY}
@@ -381,9 +450,11 @@ export function Interview({
               </div>
             </div>
             <p className="hint" id="story-input-hint">
-              This is the only answer box. You can mix typing and speech, then
-              edit the whole transcript here. Use fictional details only; do not
-              enter medication doses or treatment directions.
+              Raw text stays in this page until you review privacy. Microphone
+              input is allowed only when the browser supports on-device speech;
+              there is no automatic cloud transcription fallback. Use fictional
+              details only. Names, health information and indirect identifying
+              details still need your judgment.
             </p>
           </div>
         </section>
@@ -392,30 +463,99 @@ export function Interview({
           aria-labelledby="ready-for-card"
         >
           <span className="section-icon">
-            <Sparkles size={22} />
+            <ShieldCheck size={22} />
           </span>
-          <h2 id="ready-for-card">One story. A more familiar care card.</h2>
+          <h2 id="ready-for-card">Check privacy before sharing.</h2>
           <p>
-            Gemini will turn what you’ve shared into a structured draft. It can
-            summarize and interpret the meaning, while keeping uncertainty
-            visible. You’ll check and approve the card before it is shared.
+            A local check removes likely identifiers before any story is saved
+            or sent to Gemini. You decide what is necessary for the care card.
           </p>
+          <button
+            className="button secondary privacy-review-button"
+            type="button"
+            disabled={locked || !story.trim()}
+            onClick={reviewPrivacy}
+          >
+            <ShieldCheck size={17} /> Review privacy
+          </button>
+          {privacyDraft !== null && (
+            <div className="privacy-review" id="privacy-review">
+              <h3>Text you will share</h3>
+              <p className="hint">
+                {privacyFindings.some((finding) => finding.action === "removed")
+                  ? "Potential identifiers were removed. Categories marked for review remain in the text and need your judgment."
+                  : "No automatic removals were found. Review any flagged details below; the story may still identify someone."}
+              </p>
+              {privacyFindings.length > 0 && (
+                <ul className="privacy-findings">
+                  {privacyFindings.map((finding, index) => (
+                    <li key={index}>
+                      {finding.action === "removed" ? "Removed" : "Review"}:{" "}
+                      {finding.label} <span>{finding.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <label htmlFor="privacy-story">
+                Review and edit the screened text
+              </label>
+              <textarea
+                id="privacy-story"
+                rows={8}
+                value={privacyDraft}
+                maxLength={MAX_STORY}
+                disabled={locked}
+                onChange={(event) => {
+                  setPrivacyDraft(event.target.value);
+                  setPrivacyConfirmed(false);
+                  setPrivacyError("");
+                }}
+              />
+              <p className="privacy-limits">
+                This is a heuristic privacy aid, not a PIPA/FIPPA compliance
+                decision. It can miss names, indirect identifiers, and sensitive
+                context. Health information may remain identifiable. Remove
+                unnecessary details about this person or anyone else, and
+                confirm your authority and purpose for sharing.
+              </p>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={privacyConfirmed}
+                  disabled={locked}
+                  onChange={(event) => confirmPrivacy(event.target.checked)}
+                />
+                <span>
+                  I reviewed this text and want to use it for the demo care
+                  card. This confirms my review; it is not legal consent or a
+                  compliance certificate.
+                </span>
+              </label>
+              {privacyError && (
+                <p className="inline-error" role="alert">
+                  {privacyError}
+                </p>
+              )}
+            </div>
+          )}
           <div className="questionnaire-save-status" role="status">
             {stale ? (
               "Load the latest saved story before saving."
             ) : busy ? (
               generating ? (
-                "Reading your story and creating the card…"
+                "Reading the reviewed story and creating the card…"
               ) : (
-                "Saving your story…"
+                "Saving the reviewed story…"
               )
-            ) : recording ? (
-              "Stop recording before saving or generating."
+            ) : recording || preparingSpeech ? (
+              "Stop recording before reviewing or sharing."
+            ) : !privacyReady ? (
+              "Review privacy and confirm the screened text before sharing."
             ) : dirty ? (
-              "Unsaved changes · Save your story before leaving this page."
+              "Reviewed text is ready. Saving replaces the raw story with the screened version."
             ) : (
               <>
-                <Check size={14} /> All changes saved
+                <Check size={14} /> Reviewed text ready
               </>
             )}
           </div>
@@ -423,19 +563,25 @@ export function Interview({
             <button
               className="button secondary"
               type="button"
-              disabled={locked || stale || !relationship}
+              disabled={locked || stale || !relationship || !privacyReady}
               onClick={() =>
                 act(async () => {
                   await save();
                 })
               }
             >
-              <Save size={16} /> Save story
+              <Save size={16} /> Save reviewed story
             </button>
             <button
               className="button"
               type="submit"
-              disabled={locked || stale || !relationship || !story.trim()}
+              disabled={
+                locked ||
+                stale ||
+                !relationship ||
+                !privacyReady ||
+                !privacyDraft?.trim()
+              }
             >
               {generating ? (
                 <span className="spinner small" />
@@ -448,14 +594,15 @@ export function Interview({
             </button>
           </div>
           <small>
-            Nothing changes on the shared card until the family approves the
-            generated profile.
+            Only reviewed text is sent. Nothing changes on the shared card until
+            the family approves the generated profile.
           </small>
           <p className="hint">
-            With a Gemini key configured, your fictional story is sent to Google
-            for interpretation. Without a working key, a labelled local fallback
-            uses simple rules instead. Your browser handles speech-to-text;
-            KinCard stores only the text.
+            Gemini receives the screened text when a key is configured;
+            otherwise a labelled local fallback is used. The server checks the
+            reviewed text again. Existing saved demo records are not
+            automatically erased by this feature. Real patient use still
+            requires a complete privacy, consent, security and vendor review.
           </p>
         </section>
       </form>

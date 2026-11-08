@@ -1,62 +1,144 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
   CheckCircle2,
   Heart,
+  Languages,
   NotebookPen,
   RefreshCw,
   Sparkles,
   Sprout,
 } from "lucide-react";
 import type { Profile } from "../../lib/domain";
-import {
-  api,
-  Avatar,
-  CareSections,
-  DemoNotice,
-  formatDate,
-  Logo,
-} from "./shared";
+import { FIELD_LABELS } from "../../lib/domain";
+import { CARE_LANGUAGES, CARD_COPY } from "../../lib/care-language";
+import type { CareLanguage, CareTranslation } from "../../lib/care-language";
+import { api, Avatar, CareSections, formatDate, Logo } from "./shared";
+
+type CardData = {
+  profile: Profile | null;
+  updatedAt: string;
+  revision: number;
+};
 export default function CareView({ token }: { token: string }) {
-  const [data, setData] = useState<{
-      profile: Profile | null;
-      updatedAt: string;
-      revision: number;
-    } | null>(null),
+  const [data, setData] = useState<CardData | null>(null),
     [error, setError] = useState(""),
-    [loading, setLoading] = useState(true),
-    [author, setAuthor] = useState("Alex · demo caregiver"),
+    [loading, setLoading] = useState(true);
+  const [author, setAuthor] = useState("Alex · demo caregiver"),
     [text, setText] = useState(""),
     [busy, setBusy] = useState(false),
-    [sent, setSent] = useState(""),
+    [sent, setSent] = useState(false),
+    [noteNotice, setNoteNotice] = useState(""),
     [noteError, setNoteError] = useState("");
+  const [language, setLanguage] = useState<CareLanguage>("en"),
+    [translation, setTranslation] = useState<CareTranslation | null>(null),
+    [translating, setTranslating] = useState(false),
+    [translationError, setTranslationError] = useState("");
+  const translationRequest = useRef(0),
+    controller = useRef<AbortController | null>(null),
+    refreshRequest = useRef(0),
+    noteRequest = useRef(0),
+    noteController = useRef<AbortController | null>(null);
+  const copy = translation?.copy || CARD_COPY;
+  const profile = translation?.profile || data?.profile;
+  const labels = translation?.labels || FIELD_LABELS;
+  const displayLanguage = CARE_LANGUAGES.find(
+    (item) => item.code === (translation?.language || "en"),
+  )!;
+
+  function clearTranslation() {
+    translationRequest.current++;
+    controller.current?.abort();
+    controller.current = null;
+    setTranslation(null);
+    setTranslating(false);
+    setTranslationError("");
+  }
   async function refresh() {
+    const request = ++refreshRequest.current;
+    clearTranslation();
+    setLanguage("en");
     setError("");
     try {
-      setData(await api(`/api/care/${token}`));
+      const next = await api(`/api/care/${token}`);
+      if (refreshRequest.current === request) setData(next);
     } catch (e) {
-      setError((e as Error).message);
+      if (refreshRequest.current === request) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (refreshRequest.current === request) setLoading(false);
     }
   }
   useEffect(() => {
+    noteRequest.current++;
+    noteController.current?.abort();
+    setBusy(false);
+    setSent(false);
+    setText("");
+    setNoteNotice("");
+    setNoteError("");
     refresh();
+    return () => {
+      translationRequest.current++;
+      refreshRequest.current++;
+      controller.current?.abort();
+      noteRequest.current++;
+      noteController.current?.abort();
+    };
   }, [token]);
+  async function translate() {
+    if (!data?.profile || language === "en") {
+      clearTranslation();
+      return;
+    }
+    const request = ++translationRequest.current;
+    controller.current?.abort();
+    const abort = new AbortController();
+    controller.current = abort;
+    const target = language;
+    setTranslating(true);
+    setTranslationError("");
+    setTranslation(null);
+    try {
+      const result = await api(
+        `/api/care/${token}/translate`,
+        { language: target, revision: data.revision },
+        abort.signal,
+      );
+      if (translationRequest.current === request && !abort.signal.aborted)
+        setTranslation(result);
+    } catch (e) {
+      if (translationRequest.current === request && !abort.signal.aborted)
+        setTranslationError((e as Error).message);
+    } finally {
+      if (translationRequest.current === request) {
+        setTranslating(false);
+        controller.current = null;
+      }
+    }
+  }
+
   return (
-    <main className="care-page">
+    <main
+      className="care-page"
+      lang={displayLanguage.code}
+      dir={displayLanguage.dir}
+    >
       <header className="care-topbar">
         <a href="/" aria-label="KinCard family sign in">
           <Logo />
         </a>
         <span className="pill light">
-          <Heart size={13} /> Caregiver view
+          <Heart size={13} />
+          {copy.caregiverView}
         </span>
       </header>
       <div className="care-container">
-        <DemoNotice />
+        <div className="demo-notice">
+          <span className="demo-dot" />
+          <span>{copy.demoNotice}</span>
+        </div>
         {loading ? (
           <div className="empty-state">
             <span className="spinner" />
@@ -72,41 +154,122 @@ export default function CareView({ token }: { token: string }) {
               code.
             </p>
             <button className="button secondary" onClick={refresh}>
-              <RefreshCw size={16} /> Try again
+              <RefreshCw size={16} />
+              Try again
             </button>
           </section>
-        ) : data?.profile ? (
+        ) : data?.profile && profile ? (
           <>
+            <section
+              className="panel translation-panel"
+              dir="ltr"
+              lang="en"
+              aria-labelledby="translation-title"
+            >
+              <h2 id="translation-title">
+                <Languages size={21} /> Read this card in your language
+              </h2>
+              <p>
+                The section headings, care details, questions, and buttons can
+                be translated by Gemini.
+              </p>
+              <div className="translation-controls">
+                <div>
+                  <label htmlFor="care-language">Language</label>
+                  <select
+                    id="care-language"
+                    value={language}
+                    onChange={(e) => {
+                      clearTranslation();
+                      setLanguage(e.target.value as CareLanguage);
+                    }}
+                  >
+                    {CARE_LANGUAGES.map((item) => (
+                      <option value={item.code} key={item.code}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className="button"
+                  disabled={language === "en" || translating}
+                  onClick={translate}
+                >
+                  {translating ? (
+                    <span className="spinner small" />
+                  ) : (
+                    <Languages size={17} />
+                  )}{" "}
+                  {translating ? "Translating…" : "Translate card"}
+                </button>
+                {translation && (
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      clearTranslation();
+                      setLanguage("en");
+                    }}
+                  >
+                    Show original English
+                  </button>
+                )}
+              </div>
+              {translating && (
+                <p className="translation-status" role="status">
+                  The original English card remains below while Gemini
+                  translates.
+                </p>
+              )}
+              {translationError && (
+                <p className="inline-error" role="alert">
+                  {translationError}
+                </p>
+              )}
+              {translation && (
+                <p className="translation-status" role="status">
+                  {translation.notice}
+                </p>
+              )}
+            </section>
+            {translation && (
+              <div className="translation-warning">
+                <Languages size={17} />
+                <p>{copy.translationWarning}</p>
+              </div>
+            )}
             <section className="care-hero">
               <span className="pill green">
-                <Check size={13} /> Family-approved profile
+                <Check size={13} />
+                {copy.approvedProfile}
               </span>
-              <Avatar name={data.profile.preferredName} large />
-              <p className="eyebrow">HELLO, I’M</p>
+              <Avatar name={profile.preferredName} large />
+              <p className="eyebrow">{copy.hello}</p>
               <h1>
-                {data.profile.preferredName}
+                {profile.preferredName}
                 <span className="terracotta">.</span>
               </h1>
-              <p className="care-full-name">{data.profile.fullName}</p>
-              <p className="care-hero-caption">
-                A little about me, for a more familiar visit.
-              </p>
-              <span className="fictional-tag">
-                Fictional person · Sample care card
-              </span>
+              <p className="care-full-name">{profile.fullName}</p>
+              <p className="care-hero-caption">{copy.caption}</p>
+              <span className="fictional-tag">{copy.fictionalPerson}</span>
               <span className="care-flower" aria-hidden="true">
                 ✳
               </span>
             </section>
             <section className="panel caregiver-sections">
-              <CareSections profile={data.profile} />
+              <CareSections
+                profile={profile}
+                labels={labels}
+                emptyText={copy.emptySection}
+                healthNotice={copy.healthNotice}
+              />
             </section>
-            {data.profile.uncertainties.length > 0 && (
+            {profile.uncertainties.length > 0 && (
               <section className="panel uncertainties">
-                <h3>Please keep these uncertainties in mind</h3>
+                <h3>{copy.uncertaintyTitle}</h3>
                 <ul>
-                  {data.profile.uncertainties.map((x, i) => (
-                    <li key={i}>{x}</li>
+                  {profile.uncertainties.map((value, index) => (
+                    <li key={index}>{value}</li>
                   ))}
                 </ul>
               </section>
@@ -114,16 +277,14 @@ export default function CareView({ token }: { token: string }) {
             <div className="care-approved">
               <CheckCircle2 size={16} />
               <span>
-                Reviewed by family · Updated {formatDate(data.updatedAt)}
+                {copy.reviewedUpdated} {formatDate(data.updatedAt)}
                 <br />
-                <small>
-                  Preferences and family reports, not clinical instructions.
-                </small>
+                <small>{copy.preferencesNotice}</small>
               </span>
               <button
                 className="icon-button"
                 onClick={refresh}
-                aria-label="Refresh care card"
+                aria-label={copy.refreshCard}
               >
                 <RefreshCw size={16} />
               </button>
@@ -132,62 +293,80 @@ export default function CareView({ token }: { token: string }) {
               <span className="section-icon">
                 <NotebookPen size={23} />
               </span>
-              <h2>A little moment worth sharing?</h2>
-              <p>
-                Your observations help the family understand what makes a good
-                visit.
-              </p>
+              <h2>{copy.noteTitle}</h2>
+              <p>{copy.noteIntro}</p>
               {sent ? (
                 <div className="note-success" role="status">
                   <CheckCircle2 size={28} />
-                  <h3>Thank you for sharing.</h3>
-                  <p>{sent}</p>
-                  <small>
-                    The care card stays unchanged until the family approves an
-                    update.
-                  </small>
+                  <h3>{copy.thanks}</h3>
+                  <p>{copy.savedNote}</p>
+                  {noteNotice && (
+                    <p lang="en" dir="ltr" className="note-result-notice">
+                      {noteNotice}
+                    </p>
+                  )}
+                  <small>{copy.unchangedNote}</small>
                   <button
                     className="button secondary"
                     onClick={() => {
-                      setSent("");
+                      setSent(false);
                       setText("");
+                      setNoteNotice("");
                     }}
                   >
-                    Write another note
+                    {copy.anotherNote}
                   </button>
                 </div>
               ) : (
                 <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    if (busy) return;
+                    const request = ++noteRequest.current;
+                    noteController.current?.abort();
+                    const abort = new AbortController();
+                    noteController.current = abort;
                     setBusy(true);
                     setNoteError("");
+                    setNoteNotice("");
                     try {
-                      const result = await api(`/api/care/${token}/notes`, {
-                        author,
-                        text,
-                      });
-                      setSent(
-                        result.notice ||
-                          "Your note was saved for family review. Any suggested update will appear in the family’s visit journal.",
+                      const result = await api(
+                        `/api/care/${token}/notes`,
+                        { author, text },
+                        abort.signal,
                       );
-                      setText("");
-                    } catch (err) {
-                      setNoteError((err as Error).message);
+                      if (
+                        noteRequest.current === request &&
+                        !abort.signal.aborted
+                      ) {
+                        setSent(true);
+                        setText("");
+                        setNoteNotice(result.notice);
+                      }
+                    } catch (e) {
+                      if (
+                        noteRequest.current === request &&
+                        !abort.signal.aborted
+                      )
+                        setNoteError((e as Error).message);
                     } finally {
-                      setBusy(false);
+                      if (noteRequest.current === request) {
+                        setBusy(false);
+                        noteController.current = null;
+                      }
                     }
                   }}
                 >
-                  <label htmlFor="note-author">Your name</label>
+                  <label htmlFor="note-author">{copy.yourName}</label>
                   <input
                     id="note-author"
                     value={author}
                     required
                     maxLength={80}
+                    disabled={busy}
                     onChange={(e) => setAuthor(e.target.value)}
                   />
-                  <label htmlFor="visit-text">What did you notice?</label>
+                  <label htmlFor="visit-text">{copy.observationQuestion}</label>
                   <textarea
                     id="visit-text"
                     rows={5}
@@ -195,19 +374,22 @@ export default function CareView({ token }: { token: string }) {
                     maxLength={4000}
                     required
                     minLength={5}
+                    disabled={busy}
                     onChange={(e) => setText(e.target.value)}
-                    placeholder="For example: Maggie smiled while looking at garden photos today. She asked to see them again."
+                    placeholder={copy.notePlaceholder}
                   />
                   <button
                     type="button"
                     className="text-button sample-note"
+                    disabled={busy}
                     onClick={() =>
                       setText(
                         "Maggie smiled while looking at garden photos today. She asked to see them again.",
                       )
                     }
                   >
-                    <Sparkles size={14} /> Try a fictional sample note
+                    <Sparkles size={14} />
+                    {copy.sampleNote}
                   </button>
                   {noteError && (
                     <p role="alert" className="inline-error">
@@ -223,26 +405,16 @@ export default function CareView({ token }: { token: string }) {
                     ) : (
                       <NotebookPen size={17} />
                     )}{" "}
-                    {busy
-                      ? "Saving your observation…"
-                      : "Share with the family"}
+                    {busy ? copy.savingNote : copy.shareNote}
                     <ArrowRight size={17} />
                   </button>
-                  <p className="hint">
-                    Fictional observations only. Gemini, when configured,
-                    suggests a possible update for family review. No automatic
-                    profile changes or treatment advice.
-                  </p>
+                  <p className="hint">{copy.notePrivacy}</p>
                 </form>
               )}
             </section>
             <div className="care-kindness">
               <Heart size={21} />
-              <p>
-                Thank you for seeing the person
-                <br />
-                <em>behind the care.</em>
-              </p>
+              <p>{copy.kindness}</p>
             </div>
           </>
         ) : (
@@ -257,13 +429,10 @@ export default function CareView({ token }: { token: string }) {
         )}
         <footer className="care-footer">
           <Logo />
-          <p>
-            Fictional hackathon demo · Demo access only
-            <br />
-            Not suitable for real patient information.
-          </p>
+          <p>{copy.footerNotice}</p>
           <a href="/">
-            Open family space <ArrowRight size={12} />
+            {copy.familySpace}
+            <ArrowRight size={12} />
           </a>
         </footer>
       </div>

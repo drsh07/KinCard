@@ -1,4 +1,14 @@
-import { generateProfile, generateSuggestion } from "../../../lib/ai.ts";
+import {
+  requirePrivacyReviewed,
+  screenProfile,
+  screenText,
+} from "../../../lib/privacy.ts";
+import {
+  generateProfile,
+  generateSuggestion,
+  getAiStatus,
+  checkGeminiConnection,
+} from "../../../lib/ai.ts";
 import { generateNarrative, parseStory } from "../../../lib/narrative.ts";
 import type { KinState, Suggestion, VisitNote } from "../../../lib/domain.ts";
 import { bindings, loadState, saveState } from "../../../lib/store.ts";
@@ -55,8 +65,18 @@ function interview(source: Record<string, unknown>) {
       "The optional demo terms choice must be true or false.",
     );
   return {
-    answers: parseAnswers(source.answers),
-    relationship: text(source.relationship, "Relationship", 80, true),
+    answers: Object.fromEntries(
+      Object.entries(parseAnswers(source.answers)).map(([field, value]) => [
+        field,
+        requirePrivacyReviewed(value, source.privacyReviewed),
+      ]),
+    ) as ReturnType<typeof parseAnswers>,
+    relationship: text(
+      screenText(text(source.relationship, "Relationship", 80, true)).text,
+      "Relationship",
+      80,
+      true,
+    ),
     terms: source.terms,
   };
 }
@@ -66,8 +86,16 @@ function narrativeInput(source: Record<string, unknown>, required = false) {
       "The optional demo terms choice must be true or false.",
     );
   return {
-    story: parseStory(source.story, required),
-    relationship: text(source.relationship, "Relationship", 80, true),
+    story: requirePrivacyReviewed(
+      parseStory(source.story, required),
+      source.privacyReviewed,
+    ),
+    relationship: text(
+      screenText(text(source.relationship, "Relationship", 80, true)).text,
+      "Relationship",
+      80,
+      true,
+    ),
     terms: source.terms,
   };
 }
@@ -117,8 +145,18 @@ async function handle(request: Request): Promise<Response> {
       const input = await body(request);
       const note: VisitNote = {
         id: crypto.randomUUID(),
-        author: text(input.author, "Visitor name", 80, true),
-        text: text(input.text, "Visit note", 4000, true),
+        author: text(
+          screenText(text(input.author, "Visitor name", 80, true)).text,
+          "Visitor name",
+          80,
+          true,
+        ),
+        text: text(
+          screenText(text(input.text, "Visit note", 4000, true)).text,
+          "Visit note",
+          4000,
+          true,
+        ),
         createdAt: new Date().toISOString(),
       };
       if (state.notes.length >= 300)
@@ -131,12 +169,17 @@ async function handle(request: Request): Promise<Response> {
         key: config.GEMINI_API_KEY,
         model: config.GEMINI_MODEL,
       });
-      const suggestion: Suggestion | null = result.value
+      const safeSuggestion = text(
+        screenText(result.value).text,
+        "Screened suggestion",
+        4000,
+      );
+      const suggestion: Suggestion | null = safeSuggestion
         ? {
             id: crypto.randomUUID(),
             noteId: note.id,
             field: result.field,
-            value: result.value,
+            value: safeSuggestion,
             reason:
               "Visitor-reported observation, not an established fact. Confirm with the family before adding it.",
             uncertain: true,
@@ -164,6 +207,26 @@ async function handle(request: Request): Promise<Response> {
   }
   if (!signedIn(request))
     throw new InputError("Please sign in with the demo family account.", 401);
+  if (request.method === "GET" && route === "ai/status")
+    return json(
+      getAiStatus({
+        key: bindings().GEMINI_API_KEY,
+        model: bindings().GEMINI_MODEL,
+      }),
+    );
+  if (request.method === "POST" && route === "ai/check") {
+    const input = await body(request);
+    if (Object.keys(input).length)
+      throw new InputError(
+        "The connection check does not accept story text or API keys.",
+      );
+    return json(
+      await checkGeminiConnection({
+        key: bindings().GEMINI_API_KEY,
+        model: bindings().GEMINI_MODEL,
+      }),
+    );
+  }
   if (request.method === "GET" && route === "state")
     return json(await loadState());
   if (request.method !== "POST")
@@ -190,7 +253,8 @@ async function handle(request: Request): Promise<Response> {
       "answers" in submitted
         ? await generateProfile(submitted.answers, aiConfig)
         : await generateNarrative(submitted.story, aiConfig);
-    const { uncertainties: _flags, ...extractedAnswers } = result.profile;
+    const profile = screenProfile(result.profile);
+    const { uncertainties: _flags, ...extractedAnswers } = profile;
     const answers =
       "answers" in submitted ? submitted.answers : extractedAnswers;
     const next = await saveState(
@@ -198,21 +262,24 @@ async function handle(request: Request): Promise<Response> {
         ...state,
         ...submitted,
         answers,
-        draft: result.profile,
+        draft: profile,
         aiMode: result.mode,
         aiNotice: result.notice,
       },
       state.revision,
     );
     return json({
-      profile: result.profile,
+      profile,
       mode: result.mode,
       notice: result.notice,
       state: next,
     });
   }
   if (route === "approve-profile") {
-    const next = approveProfile(state, parseProfile(input.profile));
+    const next = approveProfile(
+      state,
+      screenProfile(parseProfile(input.profile)),
+    );
     return json({ state: await saveState(next, state.revision) });
   }
   if (route === "qr")
@@ -225,7 +292,9 @@ async function handle(request: Request): Promise<Response> {
   if (parts[0] === "suggestions" && parts.length === 2) {
     if (input.decision !== "approved" && input.decision !== "rejected")
       throw new InputError("Choose approve or reject.");
-    const next = decideSuggestion(state, parts[1], input.decision);
+    let next = decideSuggestion(state, parts[1], input.decision);
+    if (next.profile && input.decision === "approved")
+      next = { ...next, profile: screenProfile(next.profile) };
     return json({ state: await saveState(next, state.revision) });
   }
   throw new InputError("This action was not found.", 404);
