@@ -71,6 +71,13 @@ export default defineConfig(async ({ command, mode }) => {
                 vars: {
                   GEMINI_API_KEY: localEnv.GEMINI_API_KEY || "",
                   GEMINI_MODEL: localEnv.GEMINI_MODEL || "gemini-3.8-flash",
+                  // Optional Databricks storage. Leave unset to use the local demo DB.
+                  DATABRICKS_HOST: localEnv.DATABRICKS_HOST || "",
+                  DATABRICKS_TOKEN: localEnv.DATABRICKS_TOKEN || "",
+                  DATABRICKS_WAREHOUSE_ID: localEnv.DATABRICKS_WAREHOUSE_ID || "",
+                  DATABRICKS_TABLE: localEnv.DATABRICKS_TABLE || "",
+                  DATABRICKS_CATALOG: localEnv.DATABRICKS_CATALOG || "",
+                  DATABRICKS_SCHEMA: localEnv.DATABRICKS_SCHEMA || "",
                 },
                 services: [
                   {

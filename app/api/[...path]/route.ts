@@ -11,7 +11,12 @@ import {
 } from "../../../lib/ai.ts";
 import { generateNarrative, parseStory } from "../../../lib/narrative.ts";
 import type { KinState, Suggestion, VisitNote } from "../../../lib/domain.ts";
-import { bindings, loadState, saveState } from "../../../lib/store.ts";
+import {
+  bindings,
+  loadState,
+  saveState,
+  storageMode,
+} from "../../../lib/store.ts";
 import { approveProfile, decideSuggestion } from "../../../lib/transitions.ts";
 import {
   cardMemory,
@@ -216,12 +221,13 @@ async function handle(request: Request): Promise<Response> {
   if (!signedIn(request))
     throw new InputError("Please sign in with the demo family account.", 401);
   if (request.method === "GET" && route === "ai/status")
-    return json(
-      getAiStatus({
+    return json({
+      ...getAiStatus({
         key: bindings().GEMINI_API_KEY,
         model: bindings().GEMINI_MODEL,
       }),
-    );
+      storage: storageMode(),
+    });
   if (request.method === "POST" && route === "ai/check") {
     const input = await body(request);
     if (Object.keys(input).length)

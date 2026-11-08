@@ -126,6 +126,15 @@ export function GeminiStatus() {
           connection to verify a response.
         </p>
       )}
+      {status?.storage && (
+        <p className="hint">
+          Data storage:{" "}
+          {status.storage === "databricks"
+            ? "Databricks"
+            : "local demo database (Databricks not configured)"}
+          .
+        </p>
+      )}
       <p>
         Add your key to <code>.env.local</code> in the project folder, then stop
         and restart the app. Keep the key in that local file.
